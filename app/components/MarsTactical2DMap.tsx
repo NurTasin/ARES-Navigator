@@ -196,6 +196,12 @@ interface MarsTactical2DMapProps {
   onSelectPanoStation: (station: RoverPanoramaStation) => void;
   highDetailMode?: boolean;
   routeLineWidthScale?: number;
+  renderScale?: number;
+  maxZoomCap?: number;
+  showWaypointLegends?: boolean;
+  showScienceLegends?: boolean;
+  showHubLegends?: boolean;
+  showGraticuleAndScale?: boolean;
 }
 
 // Preloaded local 0ms base mosaics for continuous, gap-free fallback rendering
@@ -278,6 +284,12 @@ export function MarsTactical2DMap({
   onSelectPanoStation,
   highDetailMode = true,
   routeLineWidthScale = 1.2,
+  renderScale = 1.0,
+  maxZoomCap = 11,
+  showWaypointLegends = true,
+  showScienceLegends = true,
+  showHubLegends = true,
+  showGraticuleAndScale = true,
 }: MarsTactical2DMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -382,7 +394,7 @@ export function MarsTactical2DMap({
     const height = container.clientHeight;
     if (width <= 0 || height <= 0) return;
 
-    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const dpr = Math.min(2.5, Math.max(0.5, (window.devicePixelRatio || 1) * renderScale));
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -413,7 +425,8 @@ export function MarsTactical2DMap({
 
     // 3. Determine Optimal WMTS Zoom Level z from pixel density (Retina High-Res up to z=11)
     const idealZ = Math.round(Math.log2((zoomScale * 180) / 256));
-    const targetZ = Math.max(0, Math.min(highDetailMode ? 11 : 9, idealZ));
+    const effectiveMaxZ = Math.min(maxZoomCap, highDetailMode ? 11 : 9);
+    const targetZ = Math.max(0, Math.min(effectiveMaxZ, idealZ));
 
     // =========================================================================
     // 4. DUAL-PASS GIS TILE COMPOSITING (ZERO TILE REPETITION!)
@@ -535,57 +548,59 @@ export function MarsTactical2DMap({
     }
 
     // 5. Draw Coordinate Graticule Grid Lines (Dynamic Pixel Spacing - NO TEXT SMUDGE!)
-    ctx.strokeStyle = 'rgba(100, 140, 180, 0.22)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
+    if (showGraticuleAndScale) {
+      ctx.strokeStyle = 'rgba(100, 140, 180, 0.22)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
 
-    const targetPxSpacing = 140; // Maintain at least 140px between grid lines
-    const degPerPxLon = 1 / (zoomScale * cosLat);
-    const minDegSpacing = degPerPxLon * targetPxSpacing;
+      const targetPxSpacing = 140; // Maintain at least 140px between grid lines
+      const degPerPxLon = 1 / (zoomScale * cosLat);
+      const minDegSpacing = degPerPxLon * targetPxSpacing;
 
-    const candidateIntervals = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0];
-    let gridStep = candidateIntervals[candidateIntervals.length - 1];
-    for (const step of candidateIntervals) {
-      if (step >= minDegSpacing) {
-        gridStep = step;
-        break;
+      const candidateIntervals = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0];
+      let gridStep = candidateIntervals[candidateIntervals.length - 1];
+      for (const step of candidateIntervals) {
+        if (step >= minDegSpacing) {
+          gridStep = step;
+          break;
+        }
       }
-    }
 
-    const gLatMin = Math.floor(minLat / gridStep) * gridStep;
-    const gLatMax = Math.ceil(maxLat / gridStep) * gridStep;
-    const gLonMin = Math.floor(minLon / gridStep) * gridStep;
-    const gLonMax = Math.ceil(maxLon / gridStep) * gridStep;
+      const gLatMin = Math.floor(minLat / gridStep) * gridStep;
+      const gLatMax = Math.ceil(maxLat / gridStep) * gridStep;
+      const gLonMin = Math.floor(minLon / gridStep) * gridStep;
+      const gLonMax = Math.ceil(maxLon / gridStep) * gridStep;
 
-    ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.85)';
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.85)';
 
-    const decimals = gridStep < 0.01 ? 3 : gridStep < 0.1 ? 2 : gridStep < 1 ? 1 : 0;
+      const decimals = gridStep < 0.01 ? 3 : gridStep < 0.1 ? 2 : gridStep < 1 ? 1 : 0;
 
-    for (let l = gLatMin; l <= gLatMax; l += gridStep) {
-      const p = projectToScreen(l, viewCenter.lon, width, height);
-      if (p.y >= 20 && p.y <= height - 20) {
-        ctx.beginPath();
-        ctx.moveTo(0, p.y);
-        ctx.lineTo(width, p.y);
-        ctx.stroke();
-        const latLabel = `${Math.abs(l).toFixed(decimals)}°${l >= 0 ? 'N' : 'S'}`;
-        ctx.fillText(latLabel, 8, p.y - 3);
+      for (let l = gLatMin; l <= gLatMax; l += gridStep) {
+        const p = projectToScreen(l, viewCenter.lon, width, height);
+        if (p.y >= 20 && p.y <= height - 20) {
+          ctx.beginPath();
+          ctx.moveTo(0, p.y);
+          ctx.lineTo(width, p.y);
+          ctx.stroke();
+          const latLabel = `${Math.abs(l).toFixed(decimals)}°${l >= 0 ? 'N' : 'S'}`;
+          ctx.fillText(latLabel, 8, p.y - 3);
+        }
       }
-    }
 
-    for (let l = gLonMin; l <= gLonMax; l += gridStep) {
-      const p = projectToScreen(viewCenter.lat, l, width, height);
-      if (p.x >= 30 && p.x <= width - 30) {
-        ctx.beginPath();
-        ctx.moveTo(p.x, 0);
-        ctx.lineTo(p.x, height);
-        ctx.stroke();
-        const lonLabel = `${Math.abs(l).toFixed(decimals)}°${l >= 0 ? 'E' : 'W'}`;
-        ctx.fillText(lonLabel, p.x + 4, height - 8);
+      for (let l = gLonMin; l <= gLonMax; l += gridStep) {
+        const p = projectToScreen(viewCenter.lat, l, width, height);
+        if (p.x >= 30 && p.x <= width - 30) {
+          ctx.beginPath();
+          ctx.moveTo(p.x, 0);
+          ctx.lineTo(p.x, height);
+          ctx.stroke();
+          const lonLabel = `${Math.abs(l).toFixed(decimals)}°${l >= 0 ? 'E' : 'W'}`;
+          ctx.fillText(lonLabel, p.x + 4, height - 8);
+        }
       }
+      ctx.setLineDash([]);
     }
-    ctx.setLineDash([]);
 
     // 6. Draw Bio-Metabolic Walkback Isochrone Polygon
     if (showWalkbackIsochrone && walkbackIsochrone) {
@@ -768,37 +783,39 @@ export function MarsTactical2DMap({
         ctx.shadowBlur = 0;
       }
 
-      // Waypoints A1, A2, B2, R1 (Clean rounded integer elevation values)
-      for (const wp of routeData.waypoints) {
-        if (wp.id === 'R1' && !showReturnLeg) continue;
-        const p = projectToScreen(wp.lat, wp.lon, width, height);
+      // Waypoints A, M1, B, R1 (Clean rounded integer elevation values)
+      if (showWaypointLegends) {
+        for (const wp of routeData.waypoints) {
+          if (wp.id === 'R1' && !showReturnLeg) continue;
+          const p = projectToScreen(wp.lat, wp.lon, width, height);
 
-        ctx.fillStyle = wp.id === 'B2' ? '#ef4444' : wp.id === 'R1' ? '#f59e0b' : '#10b981';
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+          ctx.fillStyle = wp.id === 'B' ? '#ef4444' : wp.id === 'R1' ? '#f59e0b' : '#10b981';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
 
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 10px monospace';
-        ctx.fillText(`${wp.label} (${Math.round(wp.elevM)} m)`, p.x + 8, p.y + 4);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 10px monospace';
+          ctx.fillText(`${wp.label} (${Math.round(wp.elevM)} m)`, p.x + 8, p.y + 4);
+        }
+
+        // Hazard Callouts
+        for (const haz of routeData.hazardPoints) {
+          const p = projectToScreen(haz.lat, haz.lon, width, height);
+          ctx.fillStyle = '#f59e0b';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#fde68a';
+          ctx.font = '9px monospace';
+          ctx.fillText(`[HAZARD] ${haz.label}`, p.x + 6, p.y - 4);
+        }
       }
-
-      // Hazard Callouts
-      for (const haz of routeData.hazardPoints) {
-        const p = projectToScreen(haz.lat, haz.lon, width, height);
-        ctx.fillStyle = '#f59e0b';
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#fde68a';
-        ctx.font = '9px monospace';
-        ctx.fillText(`[HAZARD] ${haz.label}`, p.x + 6, p.y - 4);
-      }
-    } else if (routingEnabled) {
+    } else if (routingEnabled && showWaypointLegends) {
       // Endpoint pins when untraversable
       const pA = projectToScreen(routeEndpoints.startLat, routeEndpoints.startLon, width, height);
       const pB = projectToScreen(routeEndpoints.endLat, routeEndpoints.endLon, width, height);
@@ -807,69 +824,73 @@ export function MarsTactical2DMap({
       ctx.beginPath();
       ctx.arc(pA.x, pA.y, 6, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillText('A1 (ORIGIN)', pA.x + 8, pA.y + 4);
+      ctx.fillText('A (ORIGIN)', pA.x + 8, pA.y + 4);
 
       ctx.fillStyle = '#ef4444';
       ctx.beginPath();
       ctx.arc(pB.x, pB.y, 6, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillText('B2 (TARGET)', pB.x + 8, pB.y + 4);
+      ctx.fillText('B (TARGET)', pB.x + 8, pB.y + 4);
     }
 
     // =========================================================================
     // 10. INTERACTIVE SCIENCE TARGETS ON MAP (NASA MISSION FUSION)
     // =========================================================================
-    const visibleScienceTargets = SCIENCE_TARGETS_DATABASE.filter((st) => st.siteId === site.id);
-    visibleScienceTargets.forEach((st) => {
-      const p = projectToScreen(st.lat, st.lon, width, height);
-      if (p.x >= 0 && p.x <= width && p.y >= 0 && p.y <= height) {
-        const isHovered = selectedScienceTarget?.id === st.id;
+    if (showScienceLegends) {
+      const visibleScienceTargets = SCIENCE_TARGETS_DATABASE.filter((st) => st.siteId === site.id);
+      visibleScienceTargets.forEach((st) => {
+        const p = projectToScreen(st.lat, st.lon, width, height);
+        if (p.x >= 0 && p.x <= width && p.y >= 0 && p.y <= height) {
+          const isHovered = selectedScienceTarget?.id === st.id;
 
-        // Glowing Science Target Beacon
-        ctx.fillStyle = isHovered ? '#f59e0b' : '#a855f7';
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, isHovered ? 7 : 5, 0, Math.PI * 2);
-        ctx.fill();
+          // Glowing Science Target Beacon
+          ctx.fillStyle = isHovered ? '#f59e0b' : '#a855f7';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, isHovered ? 7 : 5, 0, Math.PI * 2);
+          ctx.fill();
 
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
 
-        // Pulsing ring
-        ctx.strokeStyle = isHovered ? 'rgba(245, 158, 11, 0.7)' : 'rgba(168, 85, 247, 0.45)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, isHovered ? 13 : 9, 0, Math.PI * 2);
-        ctx.stroke();
+          // Pulsing ring
+          ctx.strokeStyle = isHovered ? 'rgba(245, 158, 11, 0.7)' : 'rgba(168, 85, 247, 0.45)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, isHovered ? 13 : 9, 0, Math.PI * 2);
+          ctx.stroke();
 
-        // Cam and point indicators may not show label by default (clean map!)
-        if (isHovered) {
-          ctx.font = 'bold 9px monospace';
-          ctx.fillStyle = '#fde68a';
-          ctx.fillText(`[SCI] ${st.name}`, p.x + 9, p.y - 4);
-        }
-      }
-    });
-
-    // 11. Nearby Regional Landmarks (De-cluttered)
-    const drawnLabels: { x: number; y: number }[] = [];
-    MARS_LANDMARKS.forEach((lm) => {
-      const p = projectToScreen(lm.lat, lm.lon, width, height);
-      if (p.x >= 0 && p.x <= width && p.y >= 0 && p.y <= height) {
-        ctx.fillStyle = '#22d3ee';
-        ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
-
-        const tooClose = drawnLabels.some((dl) => Math.hypot(dl.x - p.x, dl.y - p.y) < 65);
-        if (!tooClose && (!routingEnabled || Math.hypot(p.x - width * 0.5, p.y - height * 0.5) > 60)) {
-          if (zoomScale > 1600) {
-            ctx.font = '9px monospace';
-            ctx.fillStyle = 'rgba(203, 213, 225, 0.65)';
-            ctx.fillText(lm.name, p.x + 6, p.y + 3);
-            drawnLabels.push(p);
+          // Cam and point indicators may not show label by default (clean map!)
+          if (isHovered) {
+            ctx.font = 'bold 9px monospace';
+            ctx.fillStyle = '#fde68a';
+            ctx.fillText(`[SCI] ${st.name}`, p.x + 9, p.y - 4);
           }
         }
-      }
-    });
+      });
+    }
+
+    // 11. Nearby Regional Landmarks (De-cluttered)
+    if (showHubLegends) {
+      const drawnLabels: { x: number; y: number }[] = [];
+      MARS_LANDMARKS.forEach((lm) => {
+        const p = projectToScreen(lm.lat, lm.lon, width, height);
+        if (p.x >= 0 && p.x <= width && p.y >= 0 && p.y <= height) {
+          ctx.fillStyle = '#22d3ee';
+          ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+
+          const tooClose = drawnLabels.some((dl) => Math.hypot(dl.x - p.x, dl.y - p.y) < 65);
+          if (!tooClose && (!routingEnabled || Math.hypot(p.x - width * 0.5, p.y - height * 0.5) > 60)) {
+            if (zoomScale > 1600) {
+              ctx.font = '9px monospace';
+              ctx.fillStyle = 'rgba(203, 213, 225, 0.65)';
+              ctx.fillText(lm.name, p.x + 6, p.y + 3);
+              drawnLabels.push(p);
+            }
+          }
+        }
+      });
+    }
 
     // 12. Rover Panorama Stations (Compact optics icon by default)
     if (showPanoMarkers) {
@@ -896,46 +917,48 @@ export function MarsTactical2DMap({
     }
 
     // 13. Metric Scale Bar & Compass
-    const kmPerDeg = 59.16;
-    const pxFor1Km = zoomScale / kmPerDeg;
-    let scaleKm = 1.0;
-    if (pxFor1Km < 30) scaleKm = 5.0;
-    else if (pxFor1Km > 200) scaleKm = 0.5;
+    if (showGraticuleAndScale) {
+      const kmPerDeg = 59.16;
+      const pxFor1Km = zoomScale / kmPerDeg;
+      let scaleKm = 1.0;
+      if (pxFor1Km < 30) scaleKm = 5.0;
+      else if (pxFor1Km > 200) scaleKm = 0.5;
 
-    const barWidthPx = pxFor1Km * scaleKm;
-    const barX = 20;
-    const barY = height - 24;
+      const barWidthPx = pxFor1Km * scaleKm;
+      const barX = 20;
+      const barY = height - 24;
 
-    ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(barX, barY);
-    ctx.lineTo(barX + barWidthPx, barY);
-    ctx.moveTo(barX, barY - 4);
-    ctx.lineTo(barX, barY + 4);
-    ctx.moveTo(barX + barWidthPx, barY - 4);
-    ctx.lineTo(barX + barWidthPx, barY + 4);
-    ctx.stroke();
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(barX, barY);
+      ctx.lineTo(barX + barWidthPx, barY);
+      ctx.moveTo(barX, barY - 4);
+      ctx.lineTo(barX, barY + 4);
+      ctx.moveTo(barX + barWidthPx, barY - 4);
+      ctx.lineTo(barX + barWidthPx, barY + 4);
+      ctx.stroke();
 
-    ctx.font = 'bold 9px monospace';
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillText(`${scaleKm >= 1 ? `${scaleKm} km` : `${scaleKm * 1000} m`}`, barX + barWidthPx + 6, barY + 3);
+      ctx.font = 'bold 9px monospace';
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(`${scaleKm >= 1 ? `${scaleKm} km` : `${scaleKm * 1000} m`}`, barX + barWidthPx + 6, barY + 3);
 
-    // North Arrow
-    const compassX = width - 40;
-    const compassY = height - 40;
-    ctx.strokeStyle = '#00f0ff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(compassX, compassY + 12);
-    ctx.lineTo(compassX, compassY - 14);
-    ctx.lineTo(compassX - 4, compassY - 6);
-    ctx.moveTo(compassX, compassY - 14);
-    ctx.lineTo(compassX + 4, compassY - 6);
-    ctx.stroke();
-    ctx.fillStyle = '#00f0ff';
-    ctx.font = 'bold 10px monospace';
-    ctx.fillText('N', compassX - 3, compassY - 18);
+      // North Arrow
+      const compassX = width - 40;
+      const compassY = height - 40;
+      ctx.strokeStyle = '#00f0ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(compassX, compassY + 12);
+      ctx.lineTo(compassX, compassY - 14);
+      ctx.lineTo(compassX - 4, compassY - 6);
+      ctx.moveTo(compassX, compassY - 14);
+      ctx.lineTo(compassX + 4, compassY - 6);
+      ctx.stroke();
+      ctx.fillStyle = '#00f0ff';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText('N', compassX - 3, compassY - 18);
+    }
 
     ctx.restore();
   }, [
@@ -959,6 +982,13 @@ export function MarsTactical2DMap({
     viewCenter,
     walkbackIsochrone,
     zoomScale,
+    renderScale,
+    maxZoomCap,
+    routeLineWidthScale,
+    showWaypointLegends,
+    showScienceLegends,
+    showHubLegends,
+    showGraticuleAndScale,
   ]);
 
   // Request render on dependency changes
@@ -1286,10 +1316,10 @@ export function MarsTactical2DMap({
                   setSelectedScienceTarget(null);
                 }}
                 className="px-2 py-1 rounded bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border border-emerald-500/60 text-[9px] font-bold font-mono transition-all cursor-pointer flex items-center gap-1"
-                title="Set as Origin (A1)"
+                title="Set as Origin (A)"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                <span>START (A1)</span>
+                <span>START (A)</span>
               </button>
               <button
                 onClick={() => {
@@ -1297,10 +1327,10 @@ export function MarsTactical2DMap({
                   setSelectedScienceTarget(null);
                 }}
                 className="px-2 py-1 rounded bg-purple-600/40 hover:bg-purple-600/60 text-purple-200 border border-purple-400 text-[9px] font-bold font-mono transition-all cursor-pointer flex items-center gap-1"
-                title="Set as Target (B2)"
+                title="Set as Target (B)"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-                <span>TARGET (B2)</span>
+                <span>TARGET (B)</span>
               </button>
             </div>
           </div>
@@ -1308,7 +1338,7 @@ export function MarsTactical2DMap({
       )}
 
       {/* Live Cursor Telemetry Tooltip (Flips below cursor when near top toolbar) */}
-      {cursorInfo && cursorInfo.visible && (
+      {showGraticuleAndScale && cursorInfo && cursorInfo.visible && (
         <div
           className="pointer-events-none absolute z-40 px-2.5 py-1.5 rounded-lg bg-[#070e1e]/95 border border-cyan-500/50 shadow-2xl backdrop-blur-md text-[10px] font-mono space-y-0.5"
           style={{

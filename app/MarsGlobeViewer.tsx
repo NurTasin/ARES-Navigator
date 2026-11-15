@@ -52,6 +52,7 @@ import {
   ChevronRight,
   Maximize2,
   Sliders,
+  Settings,
   Loader2,
   Crosshair,
   Bot,
@@ -1722,6 +1723,50 @@ class QuadTileNode {
       )
     );
     this.boundingSphere.center.copy(this.center3D);
+
+    // Optional Quadtree Tile Border Outline
+    if (showBorders) {
+      const borderPts: THREE.Vector3[] = [];
+      for (let c = 0; c < DEM_GRID_SIZE; c++) {
+        const idx = c;
+        borderPts.push(
+          new THREE.Vector3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]).multiplyScalar(1.0004)
+        );
+      }
+      for (let r = 1; r < DEM_GRID_SIZE; r++) {
+        const idx = r * DEM_GRID_SIZE + TILE_SEGMENTS;
+        borderPts.push(
+          new THREE.Vector3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]).multiplyScalar(1.0004)
+        );
+      }
+      for (let c = TILE_SEGMENTS - 1; c >= 0; c--) {
+        const idx = TILE_SEGMENTS * DEM_GRID_SIZE + c;
+        borderPts.push(
+          new THREE.Vector3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]).multiplyScalar(1.0004)
+        );
+      }
+      for (let r = TILE_SEGMENTS - 1; r >= 0; r--) {
+        const idx = r * DEM_GRID_SIZE;
+        borderPts.push(
+          new THREE.Vector3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]).multiplyScalar(1.0004)
+        );
+      }
+      if (!this.borderLine) {
+        const bGeom = new THREE.BufferGeometry().setFromPoints(borderPts);
+        const bMat = new THREE.LineBasicMaterial({
+          color: this.isHighDetailSite ? 0x00f0ff : 0xf59e0b,
+          transparent: true,
+          opacity: 0.65,
+        });
+        this.borderLine = new THREE.Line(bGeom, bMat);
+        parentGroup.add(this.borderLine);
+      } else {
+        this.borderLine.geometry.setFromPoints(borderPts);
+        this.borderLine.visible = this.mesh ? this.mesh.visible : true;
+      }
+    } else if (this.borderLine) {
+      this.borderLine.visible = false;
+    }
   }
 
   setVisible(vis: boolean, showBorders: boolean) {
@@ -1976,7 +2021,9 @@ function computeRoundTripSafeRoute(
   endLat: number,
   endLon: number,
   mode: TraverseMode,
-  terrainField: UnifiedMarsTerrainField
+  terrainField: UnifiedMarsTerrainField,
+  maxUphillSlopeDeg: number = 14.0,
+  maxDownhillSlopeDeg: number = 12.0
 ): ComputedRoundTripRoute {
   const GRID_N = 52; // 52x52 lattice
   const dLatSpan = Math.abs(endLat - startLat);
@@ -2071,14 +2118,14 @@ function computeRoundTripSafeRoute(
     }
   });
 
-  const maxAllowedCellSlope = mode === 'ROVER_AUTOPILOT' ? 12.0 : 14.0;
+  const maxAllowedCellSlope = Math.max(maxUphillSlopeDeg, maxDownhillSlopeDeg);
 
-  // Immediate endpoint check: if Start (A1) or Destination (B2) sits directly on an impassable cliff
+  // Immediate endpoint check: if Start (A) or Destination (B) sits directly on an impassable cliff
   if (slopeArr[nodeA.idx] > maxAllowedCellSlope) {
     return {
       mode,
       isTraversable: false,
-      failureReason: `ORIGIN (A1) sits on an impassable ${slopeArr[nodeA.idx].toFixed(
+      failureReason: `ORIGIN (A) sits on an impassable ${slopeArr[nodeA.idx].toFixed(
         1
       )}° slope (exceeds ${maxAllowedCellSlope}° safety limit). Pick a flatter Start point.`,
       outboundPoints: [],
@@ -2101,7 +2148,7 @@ function computeRoundTripSafeRoute(
     return {
       mode,
       isTraversable: false,
-      failureReason: `DESTINATION (B2) sits on an impassable ${slopeArr[nodeB.idx].toFixed(
+      failureReason: `DESTINATION (B) sits on an impassable ${slopeArr[nodeB.idx].toFixed(
         1
       )}° slope (exceeds ${maxAllowedCellSlope}° safety limit). Pick a flatter Destination point.`,
       outboundPoints: [],
@@ -2206,16 +2253,16 @@ function computeRoundTripSafeRoute(
         // ====================================================================
         // STRICT HARD CONSTRAINTS (NO-GO MASK -> CONTINUE / INFINITY)
         // ====================================================================
+        if (signedPitchDeg > maxUphillSlopeDeg) continue;
+        if (signedPitchDeg < -maxDownhillSlopeDeg) continue;
+        if (cellSlope > maxAllowedCellSlope) continue;
+
         if (mode === 'ROVER_AUTOPILOT') {
-          // R1: Rover strictly forbidden from any segment > 12.0° slope (0.38g rollover danger)
-          if (effSlopeDeg > 12.0) continue;
-          // R4: In low-friction sand traps (mu < 0.48), max safe slope drops to 8.0°
-          if (cellFric < 0.48 && effSlopeDeg > 8.0) continue;
+          // R4: In low-friction sand traps (mu < 0.48), max safe slope drops by 30%
+          if (cellFric < 0.48 && effSlopeDeg > Math.min(maxUphillSlopeDeg, maxDownhillSlopeDeg) * 0.72) continue;
         } else {
-          // H1: Astronaut Hike strictly forbidden from uphill > +14.0° or downhill < -12.0° (scarp tumble risk)
-          if (signedPitchDeg > 14.0 || signedPitchDeg < -12.0 || cellSlope > 14.0) continue;
-          // H2: 1-ring cliff drop-off setback (>22° neighbor)
-          if (cliffNearArr[nIdx]) continue;
+          // H2: 1-ring cliff drop-off setback (>25° neighbor)
+          if (cliffNearArr[nIdx] && maxAllowedCellSlope < 24.0) continue;
         }
 
         let edgeCost = stepKm;
@@ -2228,7 +2275,7 @@ function computeRoundTripSafeRoute(
 
         edgeCost *= slopeAffinity + climbPenalty + downhillBraking + slipPenalty;
 
-        // For the Return Leg (B2 -> A1), gently encourage an independent return loop corridor
+        // For the Return Leg (B -> A), gently encourage an independent return loop corridor
         // (while still allowing shared safe passes if a narrow canyon bottleneck is the only safe way)
         if (outboundUsedSet && outboundUsedSet.has(nIdx) && nIdx !== fromIdx && nIdx !== toIdx) {
           edgeCost *= 1.38;
@@ -2249,16 +2296,13 @@ function computeRoundTripSafeRoute(
     return null; // Unreachable without violating hard safety constraints!
   };
 
-  // 1. Compute Outbound Leg (A1 -> B2)
+  // 1. Compute Outbound Leg (A -> B)
   const outboundRaw = runStrictLegAStar(nodeA.idx, nodeB.idx, null);
   if (!outboundRaw) {
     return {
       mode,
       isTraversable: false,
-      failureReason:
-        mode === 'ROVER_AUTOPILOT'
-          ? 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Every corridor between A1 and B2 exceeds the 12.0° Rover Rollover Limit.'
-          : 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Blocked by >14° climbs, >12° descents, or cliff scarps.',
+      failureReason: `OUTBOUND LEG (A → B) UNTRAVERSABLE: Blocked by >+${maxUphillSlopeDeg}° climbs or <-${maxDownhillSlopeDeg}° descents. Adjust Max Slope in Settings or pick a flatter point.`,
       outboundPoints: [],
       returnPoints: [],
       waypoints: [],
@@ -2275,17 +2319,14 @@ function computeRoundTripSafeRoute(
     };
   }
 
-  // 2. Compute Safe Return Leg (B2 -> A1)
+  // 2. Compute Safe Return Leg (B -> A)
   const outboundSet = new Set<number>(outboundRaw);
   const returnRaw = runStrictLegAStar(nodeB.idx, nodeA.idx, outboundSet);
   if (!returnRaw) {
     return {
       mode,
       isTraversable: false,
-      failureReason:
-        mode === 'ROVER_AUTOPILOT'
-          ? 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Cannot safely return from B2 to A1 without exceeding the 12.0° slope limit.'
-          : 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Outbound climb exceeds the -12.0° maximum safe downhill descent limit on return!',
+      failureReason: `RETURN LEG (B → A) UNTRAVERSABLE: Cannot return from B to A without exceeding +${maxUphillSlopeDeg}° uphill or -${maxDownhillSlopeDeg}° downhill limit!`,
       outboundPoints: [],
       returnPoints: [],
       waypoints: [],
@@ -2464,8 +2505,8 @@ function computeRoundTripSafeRoute(
 
   const waypoints: RouteWaypoint[] = [
     {
-      id: 'A1',
-      label: 'A1',
+      id: 'A',
+      label: 'A',
       lat: startPt.lat,
       lon: startPt.lon,
       elevM: Math.round(startPt.elevM),
@@ -2476,8 +2517,8 @@ function computeRoundTripSafeRoute(
       speedKmh: bioA1.speedKmh,
     },
     {
-      id: 'A2',
-      label: 'A2',
+      id: 'M1',
+      label: 'M1',
       lat: midOut.lat,
       lon: midOut.lon,
       elevM: Math.round(midOut.elevM),
@@ -2488,8 +2529,8 @@ function computeRoundTripSafeRoute(
       speedKmh: bioA2.speedKmh,
     },
     {
-      id: 'B2',
-      label: 'B2',
+      id: 'B',
+      label: 'B',
       lat: endPt.lat,
       lon: endPt.lon,
       elevM: Math.round(endPt.elevM),
@@ -2514,10 +2555,10 @@ function computeRoundTripSafeRoute(
   ];
 
   // Build 4 Round-Trip Segment Cards:
-  // 1) Outbound A1 -> A2
-  // 2) Outbound A2 -> B2
-  // 3) Return   B2 -> R1
-  // 4) Return   R1 -> A1
+  // 1) Outbound A -> M1
+  // 2) Outbound M1 -> B
+  // 3) Return   B -> R1
+  // 4) Return   R1 -> A
   const summarizeSlice = (
     pts: typeof outboundPoints,
     i0: number,
@@ -2564,7 +2605,7 @@ function computeRoundTripSafeRoute(
       midOutIdx,
       'out-1',
       'OUTBOUND',
-      'OUTBOUND: A1 → A2',
+      'OUTBOUND: A → M1',
       outboundDistKm * 0.5
     ),
     summarizeSlice(
@@ -2573,7 +2614,7 @@ function computeRoundTripSafeRoute(
       outboundPoints.length - 1,
       'out-2',
       'OUTBOUND',
-      'OUTBOUND: A2 → B2',
+      'OUTBOUND: M1 → B',
       outboundDistKm * 0.5
     ),
     summarizeSlice(
@@ -2582,7 +2623,7 @@ function computeRoundTripSafeRoute(
       midRetIdx,
       'ret-1',
       'RETURN',
-      'RETURN: B2 → R1',
+      'RETURN: B → R1',
       returnDistKm * 0.5
     ),
     summarizeSlice(
@@ -2591,7 +2632,7 @@ function computeRoundTripSafeRoute(
       returnPoints.length - 1,
       'ret-2',
       'RETURN',
-      'RETURN: R1 → A1',
+      'RETURN: R1 → A',
       returnDistKm * 0.5
     ),
   ];
@@ -2693,13 +2734,82 @@ export default function MarsGlobeViewer() {
     computeRealMarsTimeAndSun(77.4508, 18.4447, 1763148000000)
   );
 
-  // Collapsible Sidebars & Header Dropdown States
+  // Collapsible & X-Axis Stretchable Sidebars + Header Dropdown States
   const [leftPanelOpen, setLeftPanelOpen] = useState<boolean>(true);
   const [rightPanelOpen, setRightPanelOpen] = useState<boolean>(true);
+  const [leftPanelWidth, setLeftPanelWidth] = useState<number>(280);
+  const [rightPanelWidth, setRightPanelWidth] = useState<number>(288);
+  const [activeResizingPanel, setActiveResizingPanel] = useState<'LEFT' | 'RIGHT' | null>(null);
+  const panelResizeDragRef = useRef<{
+    panel: 'LEFT' | 'RIGHT';
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   const [siteDropdownOpen, setSiteDropdownOpen] = useState<boolean>(false);
   const [layerDropdownOpen, setLayerDropdownOpen] = useState<boolean>(false);
   const [safetyDropdownOpen, setSafetyDropdownOpen] = useState<boolean>(false);
+  const [settingsDropdownOpen, setSettingsDropdownOpen] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'3D' | '2D'>('3D');
+
+  const leftPanelScale = Number((leftPanelWidth / 280).toFixed(3));
+  const rightPanelScale = Number((rightPanelWidth / 288).toFixed(3));
+
+  const startPanelResize = (panel: 'LEFT' | 'RIGHT', e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    panelResizeDragRef.current = {
+      panel,
+      startX: e.clientX,
+      startWidth: panel === 'LEFT' ? leftPanelWidth : rightPanelWidth,
+    };
+    setActiveResizingPanel(panel);
+  };
+
+  useEffect(() => {
+    if (!activeResizingPanel) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const drag = panelResizeDragRef.current;
+      if (!drag) return;
+      if (drag.panel === 'LEFT') {
+        const nextW = Math.max(230, Math.min(500, drag.startWidth + (e.clientX - drag.startX)));
+        setLeftPanelWidth(Math.round(nextW));
+      } else {
+        const nextW = Math.max(240, Math.min(520, drag.startWidth + (drag.startX - e.clientX)));
+        setRightPanelWidth(Math.round(nextW));
+      }
+    };
+    const handleMouseUp = () => {
+      panelResizeDragRef.current = null;
+      setActiveResizingPanel(null);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [activeResizingPanel]);
+
+  // Resolution, Slope Limits & Legend Customization Settings
+  const [resolutionScale, setResolutionScale] = useState<number>(1.5);
+  const [maxZoomCap, setMaxZoomCap] = useState<number>(12);
+  const [lodSubdivisionBias, setLodSubdivisionBias] = useState<number>(1.32);
+  const [sunIntensity, setSunIntensity] = useState<number>(2.8);
+  const [ambientIntensity, setAmbientIntensity] = useState<number>(1.15);
+  const [cameraTiltUI, setCameraTiltUI] = useState<number>(40);
+  const [showAtmosphere, setShowAtmosphere] = useState<boolean>(true);
+  const [showTileBorders, setShowTileBorders] = useState<boolean>(false);
+
+  // Rover / Astronaut Uphill & Downhill Slope Limits
+  const [maxUphillSlopeDeg, setMaxUphillSlopeDeg] = useState<number>(14);
+  const [maxDownhillSlopeDeg, setMaxDownhillSlopeDeg] = useState<number>(12);
+
+  // Toggleable Map Legends & HUD Overlays
+  const [showWaypointLegends, setShowWaypointLegends] = useState<boolean>(true);
+  const [showScienceLegends, setShowScienceLegends] = useState<boolean>(true);
+  const [showHubLegends, setShowHubLegends] = useState<boolean>(true);
+  const [showRouteHudPill, setShowRouteHudPill] = useState<boolean>(true);
+  const [showGraticuleAndScale, setShowGraticuleAndScale] = useState<boolean>(true);
 
   // Loading Overlay State when switching maps/layers
   const [isMapSwitching, setIsMapSwitching] = useState<boolean>(false);
@@ -2856,6 +2966,9 @@ export default function MarsGlobeViewer() {
   const paramsRef = useRef({
     exaggeration: 1.0,
     wireframe: false,
+    showTileBorders: false,
+    maxZoomCap: 12,
+    lodSubdivisionBias: 1.32,
     layerMode: 'realistic' as VisualLayerMode,
     sunAzimuth: 115,
     sunElevation: 38,
@@ -3149,7 +3262,9 @@ export default function MarsGlobeViewer() {
       routeEndpoints.endLat,
       routeEndpoints.endLon,
       traverseMode,
-      terrainField
+      terrainField,
+      maxUphillSlopeDeg,
+      maxDownhillSlopeDeg
     );
     setActiveRouteData(routeData);
 
@@ -3244,10 +3359,10 @@ export default function MarsGlobeViewer() {
       routeGroup.add(new THREE.Mesh(glowGeom, glowMat));
     };
 
-    // Outbound Leg (A1 -> B2): Cyan (Earth running path scale)
+    // Outbound Leg (A -> B): Cyan (Earth running path scale)
     buildLegTube(routeData.outboundPoints, 0x00f0ff, legOffset, tubeR);
 
-    // Safe Return / Walkback Leg (B2 -> A1): Amber/Gold
+    // Safe Return / Walkback Leg (B -> A): Amber/Gold
     if (showReturnLeg) {
       buildLegTube(routeData.returnPoints, 0xf59e0b, legOffset + 0.00005, tubeR * 0.88);
     }
@@ -3256,6 +3371,8 @@ export default function MarsGlobeViewer() {
     routingEnabled,
     showReturnLeg,
     traverseMode,
+    maxUphillSlopeDeg,
+    maxDownhillSlopeDeg,
   ]);
 
   // Dedicated Walkback Isochrone recalculation whenever toggled, endpoints change, or site changes
@@ -3322,7 +3439,7 @@ export default function MarsGlobeViewer() {
         const candLon = normalizeLon(baseLon + (dX / (MARS_RADIUS_KM * cosLat)) * (180.0 / Math.PI));
 
         const m = terrainField.sampleMetricsAt(candLat, candLon, 0);
-        if (m.slopeDeg < 12.0) {
+        if (m.slopeDeg < Math.min(maxUphillSlopeDeg, maxDownhillSlopeDeg)) {
           const score = 100 - m.slopeDeg * 5 + m.frictionMu * 25 - rKm * 6;
           if (score > bestScore) {
             bestScore = score;
@@ -3340,7 +3457,7 @@ export default function MarsGlobeViewer() {
         endLon: Number(bestLon.toFixed(4)),
       }));
     }
-  }, [routeEndpoints.endLat, routeEndpoints.endLon]);
+  }, [routeEndpoints.endLat, routeEndpoints.endLon, maxUphillSlopeDeg, maxDownhillSlopeDeg]);
 
   // Landmark Selection & Flight Handler
   const handleSelectLandmark = useCallback((lm: MarsLandmark) => {
@@ -3445,6 +3562,7 @@ export default function MarsGlobeViewer() {
   useEffect(() => {
     paramsRef.current.exaggeration = exaggeration;
     paramsRef.current.wireframe = wireframe;
+    paramsRef.current.showTileBorders = showTileBorders;
 
     const tileGroup = tileGroupRef.current;
     const terrainField = terrainFieldRef.current;
@@ -3454,14 +3572,49 @@ export default function MarsGlobeViewer() {
       node.refreshUnifiedDemAndSlope(terrainField);
       node.applyVisualLayerToCanvas(paramsRef.current.layerMode);
       if (node.mesh) {
-        node.buildOrUpdateMesh(exaggeration, wireframe, false, tileGroup, terrainField);
+        node.buildOrUpdateMesh(exaggeration, wireframe, showTileBorders, tileGroup, terrainField);
       }
       if (node.children) {
         node.children.forEach(traverseAndUpdate);
       }
     };
     rootsRef.current.forEach(traverseAndUpdate);
-  }, [exaggeration, wireframe, demVersion]);
+  }, [exaggeration, wireframe, showTileBorders, demVersion]);
+
+  useEffect(() => {
+    paramsRef.current.maxZoomCap = maxZoomCap;
+    paramsRef.current.lodSubdivisionBias = lodSubdivisionBias;
+  }, [maxZoomCap, lodSubdivisionBias]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const container = containerRef.current;
+    if (!renderer || !container) return;
+    const dpr = Math.min(2.5, Math.max(0.5, (window.devicePixelRatio || 1) * (resolutionScale / 1.5)));
+    renderer.setPixelRatio(dpr);
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    if (w > 0 && h > 0) {
+      renderer.setSize(w, h);
+    }
+  }, [resolutionScale]);
+
+  useEffect(() => {
+    if (sunLightRef.current) {
+      sunLightRef.current.intensity = sunIntensity;
+    }
+    if (hemiLightRef.current) {
+      hemiLightRef.current.intensity = ambientIntensity;
+    }
+    if (atmosphereRef.current) {
+      atmosphereRef.current.visible = showAtmosphere;
+    }
+  }, [sunIntensity, ambientIntensity, showAtmosphere]);
+
+  const handleTiltChange = useCallback((newTilt: number) => {
+    setCameraTiltUI(newTilt);
+    navStateRef.current.targetTiltDeg = newTilt;
+  }, []);
 
   const updateSunSystem = useCallback(() => {
     if (!sunLightRef.current || !hemiLightRef.current || !sunMeshRef.current) return;
@@ -3624,6 +3777,9 @@ export default function MarsGlobeViewer() {
     setIsMapSwitching(true);
     if (isVisorMode) {
       setIsVisorMode(false);
+      // Auto-expand Route & Telemetry panels when leaving HUD view
+      setLeftPanelOpen(true);
+      setRightPanelOpen(true);
     }
     setMapLoadingText(
       newView === '2D'
@@ -3643,7 +3799,14 @@ export default function MarsGlobeViewer() {
       setIsMapSwitching(true);
       setMapLoadingText('INITIALIZING xEMU SPACESUIT VISOR HUD TELEMETRY...');
       setViewMode('3D');
-      // Drop camera to ground level right at the start point A1 or focus center
+      // Dismiss any open dropdowns and auto-collapse Route Planner & Telemetry panels when entering HUD view
+      setSiteDropdownOpen(false);
+      setLayerDropdownOpen(false);
+      setSafetyDropdownOpen(false);
+      setSettingsDropdownOpen(false);
+      setLeftPanelOpen(false);
+      setRightPanelOpen(false);
+      // Drop camera to ground level right at the start point A or focus center
       const targetLat = routeEndpoints.startLat || navStateRef.current.focusLat;
       const targetLon = routeEndpoints.startLon || navStateRef.current.focusLon;
       navStateRef.current.focusLat = targetLat;
@@ -3660,6 +3823,9 @@ export default function MarsGlobeViewer() {
       navStateRef.current.altitude = previousCamAltitudeRef.current || 2.4;
       navStateRef.current.tiltDeg = previousCamTiltRef.current || 45;
       setIsVisorMode(false);
+      // Auto-expand Route Planner & Telemetry panels when leaving HUD view
+      setLeftPanelOpen(true);
+      setRightPanelOpen(true);
       setTimeout(() => {
         setIsMapSwitching(false);
       }, 450);
@@ -3690,8 +3856,40 @@ export default function MarsGlobeViewer() {
       case 'TOGGLE_SPE':
         handleToggleSpeAlert();
         break;
+      case 'TOGGLE_RF_COMMS':
+        handleToggleRfComms();
+        break;
+      case 'TOGGLE_ISOCHRONE':
+        setShowWalkbackIsochrone((v) => !v);
+        break;
       case 'SET_TRAVERSE_MODE':
         setTraverseMode(cmd.payload);
+        break;
+      case 'FLY_TO_SITE': {
+        const s = EXPEDITION_SITES.find((site) => site.id === cmd.payload);
+        if (s) flyToExpeditionSite(s);
+        break;
+      }
+      case 'SET_RESOLUTION': {
+        const r = Number(cmd.payload) || 1.5;
+        setResolutionScale(r);
+        if (r >= 1.5) {
+          setHighDetailMode(true);
+          setMaxZoomCap(12);
+          setLodSubdivisionBias(1.5);
+        } else if (r <= 0.75) {
+          setHighDetailMode(false);
+          setMaxZoomCap(8);
+          setLodSubdivisionBias(1.0);
+        } else {
+          setHighDetailMode(true);
+          setMaxZoomCap(10);
+          setLodSubdivisionBias(1.32);
+        }
+        break;
+      }
+      case 'OPEN_SETTINGS':
+        setSettingsDropdownOpen(true);
         break;
     }
   };
@@ -3940,7 +4138,7 @@ export default function MarsGlobeViewer() {
         node.buildOrUpdateMesh(
           paramsRef.current.exaggeration,
           paramsRef.current.wireframe,
-          false,
+          paramsRef.current.showTileBorders,
           tileGroup,
           terrainField
         );
@@ -3966,7 +4164,7 @@ export default function MarsGlobeViewer() {
               ch.buildOrUpdateMesh(
                 paramsRef.current.exaggeration,
                 paramsRef.current.wireframe,
-                false,
+                paramsRef.current.showTileBorders,
                 tileGroup,
                 terrainField
               );
@@ -4319,11 +4517,12 @@ export default function MarsGlobeViewer() {
           Math.min(distToCam, distToFocus * 1.15) - node.boundingSphere.radius * 0.45
         );
 
+        const effectiveMaxZoom = Math.min(node.maxAllowedZoom, paramsRef.current.maxZoomCap);
         const shouldSubdivide =
-          node.z < node.maxAllowedZoom &&
+          node.z < effectiveMaxZoom &&
           isInFrontOfHorizon &&
           inFrustum &&
-          effectiveDist < node.boundingSphere.radius * 1.32;
+          effectiveDist < node.boundingSphere.radius * paramsRef.current.lodSubdivisionBias;
 
         if (shouldSubdivide) {
           if (node.z >= 2 && !node.isLoaded) {
@@ -4345,7 +4544,7 @@ export default function MarsGlobeViewer() {
               ch.buildOrUpdateMesh(
                 paramsRef.current.exaggeration,
                 paramsRef.current.wireframe,
-                false,
+                paramsRef.current.showTileBorders,
                 tileGroup,
                 terrainField
               );
@@ -4366,7 +4565,7 @@ export default function MarsGlobeViewer() {
           node.children = null;
         }
 
-        node.setVisible(true, false);
+        node.setVisible(true, paramsRef.current.showTileBorders);
         renderedTiles++;
         if (node.z > highestZ) highestZ = node.z;
 
@@ -4542,7 +4741,7 @@ export default function MarsGlobeViewer() {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [leftPanelOpen, rightPanelOpen, viewMode]);
+  }, [leftPanelOpen, rightPanelOpen, viewMode, isVisorMode, leftPanelWidth, rightPanelWidth]);
 
       // Project Waypoints, Hazard Badges, and 360° Rover Panorama Optic Stations to 2D Screen
   useEffect(() => {
@@ -4605,19 +4804,19 @@ export default function MarsGlobeViewer() {
             id: `wp-${wp.id}`,
             text: wp.label,
             kind: 'WAYPOINT',
-            color: wp.id === 'B2' ? '#ef4444' : wp.id === 'R1' ? '#f59e0b' : '#00f0ff',
+            color: wp.id === 'B' ? '#ef4444' : wp.id === 'R1' ? '#f59e0b' : '#00f0ff',
             x,
             y,
             visible,
           });
         }
       } else {
-        // Show A1 and B2 pins even when route is untraversable
+        // Show A and B pins even when route is untraversable
         const pA = projectLatLon(routeEndpoints.startLat, routeEndpoints.startLon, 0.0022);
         const pB = projectLatLon(routeEndpoints.endLat, routeEndpoints.endLon, 0.0022);
         tags.push({
-          id: 'wp-A1',
-          text: 'A1',
+          id: 'wp-A',
+          text: 'A',
           kind: 'WAYPOINT',
           color: '#10b981',
           x: pA.x,
@@ -4625,8 +4824,8 @@ export default function MarsGlobeViewer() {
           visible: pA.visible,
         });
         tags.push({
-          id: 'wp-B2',
-          text: 'B2',
+          id: 'wp-B',
+          text: 'B',
           kind: 'WAYPOINT',
           color: '#ef4444',
           x: pB.x,
@@ -4685,20 +4884,22 @@ export default function MarsGlobeViewer() {
     <div className="relative w-full h-screen bg-[#05080f] text-slate-100 overflow-hidden font-sans select-none p-2 md:p-3 flex flex-col">
       <div className="relative flex-1 w-full h-full rounded-2xl border-2 border-slate-700/80 bg-[#070b12] shadow-[inset_0_0_50px_rgba(0,0,0,0.9),0_0_30px_rgba(0,240,255,0.08)] overflow-hidden flex flex-col">
         {/* Click-outside backdrop to dismiss any open header dropdown */}
-        {(siteDropdownOpen || layerDropdownOpen || safetyDropdownOpen) && (
+        {(siteDropdownOpen || layerDropdownOpen || safetyDropdownOpen || settingsDropdownOpen) && (
           <div
             onClick={() => {
               setSiteDropdownOpen(false);
               setLayerDropdownOpen(false);
               setSafetyDropdownOpen(false);
+              setSettingsDropdownOpen(false);
             }}
             className="fixed inset-0 z-35 bg-transparent"
           />
         )}
 
         {/* ===================================================================
-            TOP TACTICAL COMMAND HEADER BAR
+            TOP TACTICAL COMMAND HEADER BAR (Hidden in Visor HUD Mode)
            =================================================================== */}
+        {!isVisorMode && (
         <header className="h-12 bg-[#0b101b]/95 border-b border-slate-700/80 px-3 flex items-center justify-between z-40 relative shrink-0 gap-2">
           {/* Left: System Title, Site Dropdown & FR-03 Search Bar */}
           <div className="flex items-center gap-2.5">
@@ -5051,7 +5252,12 @@ export default function MarsGlobeViewer() {
 
             {/* HD / Fast Upscaling Toggle */}
             <button
-              onClick={() => setHighDetailMode(!highDetailMode)}
+              onClick={() => {
+                const nextHd = !highDetailMode;
+                setHighDetailMode(nextHd);
+                setResolutionScale(nextHd ? 1.5 : 0.75);
+                setMaxZoomCap(nextHd ? 12 : 8);
+              }}
               className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border flex items-center gap-1.5 cursor-pointer ${
                 highDetailMode
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_8px_rgba(16,185,129,0.25)]'
@@ -5092,7 +5298,7 @@ export default function MarsGlobeViewer() {
               GLOBAL ORBIT
             </button>
 
-            {/* AI Copilot Toggle */}
+            {/* Nini AI Copilot Toggle */}
             <button
               onClick={() => setIsAiCopilotOpen(!isAiCopilotOpen)}
               className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border flex items-center gap-1.5 cursor-pointer ${
@@ -5100,14 +5306,14 @@ export default function MarsGlobeViewer() {
                   ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.3)]'
                   : 'bg-slate-900/80 text-cyan-300 border-cyan-500/50 hover:bg-cyan-500/20'
               }`}
-              title="Open ARES AI Tactical Copilot (Assisting Astronaut Sadia A. Puspo)"
+              title="Open Nini — AI Tactical Copilot (Assisting Astronaut Sadia A. Puspo)"
             >
               <Bot className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden xl:inline">AI COPILOT</span>
+              <span className="hidden xl:inline font-bold">NINI AI</span>
             </button>
           </div>
 
-          {/* Right: Mars Clock & Sidebar Drawer Toggles */}
+          {/* Right: Mars Clock, Settings Icon & Sidebar Drawer Toggles */}
           <div className="flex items-center gap-2 text-xs font-mono">
             <div
               suppressHydrationWarning
@@ -5121,6 +5327,366 @@ export default function MarsGlobeViewer() {
               <span suppressHydrationWarning className="text-cyan-300 font-semibold">
                 {marsEphemeris.localSolarTimeStr}
               </span>
+            </div>
+
+            {/* Settings Menu Button (single settings icon right before the collapse buttons, matching their exact design) */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setSettingsDropdownOpen(!settingsDropdownOpen);
+                  setSiteDropdownOpen(false);
+                  setLayerDropdownOpen(false);
+                  setSafetyDropdownOpen(false);
+                }}
+                className={`p-1.5 rounded border transition-all cursor-pointer ${
+                  settingsDropdownOpen
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                    : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
+                }`}
+                title="Settings: Resolution, Max Slope Limits & Legend Toggles"
+              >
+                <Settings className="w-3.5 h-3.5 text-cyan-400" />
+              </button>
+
+              {settingsDropdownOpen && (
+                <div className="absolute top-full right-0 mt-1.5 w-88 max-h-[82vh] overflow-y-auto bg-[#070f1e]/98 backdrop-blur-xl border-2 border-cyan-500/60 rounded-2xl shadow-[0_15px_45px_rgba(0,0,0,0.9),0_0_25px_rgba(0,240,255,0.2)] p-3.5 z-50 space-y-3 text-xs font-mono">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-[11px] uppercase tracking-wider">
+                      <Settings className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>MISSION &amp; RENDER SETTINGS</span>
+                    </div>
+                    <button
+                      onClick={() => setSettingsDropdownOpen(false)}
+                      className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* 1. ROVER & EVA MAXIMUM SLOPE LIMITS (UPHILL & DOWNHILL) */}
+                  <div className="bg-[#0b1629] border border-emerald-500/35 rounded-xl p-2.5 space-y-2">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-emerald-300 font-bold uppercase">
+                        ROVER &amp; EVA SLOPE LIMITS
+                      </span>
+                      <button
+                        onClick={() => {
+                          setMaxUphillSlopeDeg(14);
+                          setMaxDownhillSlopeDeg(12);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[8.5px] font-bold cursor-pointer"
+                        title="Reset to NASA default 0.38g slope limits (+14° / -12°)"
+                      >
+                        RESET
+                      </button>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-0.5">
+                        <span className="text-slate-300">Max Uphill Climb Slope:</span>
+                        <span className="text-emerald-300 font-bold">+{maxUphillSlopeDeg}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="5"
+                        max="30"
+                        step="1"
+                        value={maxUphillSlopeDeg}
+                        onChange={(e) => setMaxUphillSlopeDeg(parseInt(e.target.value))}
+                        className="w-full accent-emerald-400 cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-0.5">
+                        <span className="text-slate-300">Max Downhill Descent Slope:</span>
+                        <span className="text-amber-300 font-bold">-{maxDownhillSlopeDeg}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="5"
+                        max="30"
+                        step="1"
+                        value={maxDownhillSlopeDeg}
+                        onChange={(e) => setMaxDownhillSlopeDeg(parseInt(e.target.value))}
+                        className="w-full accent-amber-400 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 2. MAP LEGENDS & HUD OVERLAYS TOGGLES */}
+                  <div className="bg-[#0b1629] border border-purple-500/35 rounded-xl p-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px] pb-1 border-b border-slate-800">
+                      <span className="text-purple-300 font-bold uppercase">
+                        MAP LEGENDS &amp; HUD OVERLAYS
+                      </span>
+                      <button
+                        onClick={() => {
+                          const anyOn =
+                            showWaypointLegends ||
+                            showScienceLegends ||
+                            showPanoMarkers ||
+                            showHubLegends ||
+                            showRouteHudPill ||
+                            showGraticuleAndScale;
+                          const next = !anyOn;
+                          setShowWaypointLegends(next);
+                          setShowScienceLegends(next);
+                          setShowPanoMarkers(next);
+                          setShowHubLegends(next);
+                          setShowRouteHudPill(next);
+                          setShowGraticuleAndScale(next);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/50 text-purple-200 text-[8.5px] font-bold cursor-pointer"
+                      >
+                        {showWaypointLegends &&
+                        showScienceLegends &&
+                        showPanoMarkers &&
+                        showHubLegends &&
+                        showRouteHudPill &&
+                        showGraticuleAndScale
+                          ? 'HIDE ALL'
+                          : 'SHOW ALL'}
+                      </button>
+                    </div>
+
+                    {[
+                      {
+                        label: 'Route Waypoints & Hazard Tags (A, B)',
+                        val: showWaypointLegends,
+                        toggle: () => setShowWaypointLegends(!showWaypointLegends),
+                      },
+                      {
+                        label: 'Science Target Badges ([SCI])',
+                        val: showScienceLegends,
+                        toggle: () => setShowScienceLegends(!showScienceLegends),
+                      },
+                      {
+                        label: '360° Rover Panorama Markers ([CAM])',
+                        val: showPanoMarkers,
+                        toggle: () => setShowPanoMarkers(!showPanoMarkers),
+                      },
+                      {
+                        label: 'Expedition Hub & Landmark Labels',
+                        val: showHubLegends,
+                        toggle: () => setShowHubLegends(!showHubLegends),
+                      },
+                      {
+                        label: 'Bottom Floating Route HUD Pill',
+                        val: showRouteHudPill,
+                        toggle: () => setShowRouteHudPill(!showRouteHudPill),
+                      },
+                      {
+                        label: '2D Grid, Scale Bar, Compass & Tooltip',
+                        val: showGraticuleAndScale,
+                        toggle: () => setShowGraticuleAndScale(!showGraticuleAndScale),
+                      },
+                    ].map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-[10px]">
+                        <span className="text-slate-300 truncate pr-2">{item.label}</span>
+                        <button
+                          onClick={item.toggle}
+                          className={`px-2 py-0.5 rounded text-[9px] font-bold cursor-pointer shrink-0 ${
+                            item.val
+                              ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400'
+                              : 'bg-slate-800 text-slate-400 border border-slate-700'
+                          }`}
+                        >
+                          {item.val ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 3. Render Resolution Scale (DPI Supersampling) */}
+                  <div className="bg-[#0b1629] border border-cyan-500/30 rounded-xl p-2.5 space-y-2">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-cyan-300 font-bold uppercase">
+                        RENDER RESOLUTION (SUPERSAMPLING)
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200 border border-cyan-400/50 font-bold">
+                        {resolutionScale.toFixed(2)}x DPI
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {[
+                        { label: '0.75x ECO', val: 0.75, z: 8, bias: 1.0, hd: false },
+                        { label: '1.0x STD', val: 1.0, z: 10, bias: 1.25, hd: true },
+                        { label: '1.5x HD', val: 1.5, z: 12, bias: 1.32, hd: true },
+                        { label: '2.0x ULTRA', val: 2.0, z: 12, bias: 1.65, hd: true },
+                      ].map((preset) => (
+                        <button
+                          key={preset.val}
+                          onClick={() => {
+                            setResolutionScale(preset.val);
+                            setMaxZoomCap(preset.z);
+                            setLodSubdivisionBias(preset.bias);
+                            setHighDetailMode(preset.hd);
+                          }}
+                          className={`py-1.5 px-1 rounded text-[9px] font-bold transition-all border cursor-pointer ${
+                            Math.abs(resolutionScale - preset.val) < 0.05
+                              ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400 shadow-[0_0_10px_rgba(0,240,255,0.3)]'
+                              : 'bg-slate-900/90 text-slate-400 border-slate-800 hover:text-slate-200'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Max Quadtree LOD Zoom Cap */}
+                    <div className="pt-1 space-y-1">
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-slate-400">Max Quadtree Tile LOD:</span>
+                        <span className="text-emerald-300 font-bold">
+                          Z{maxZoomCap} ({maxZoomCap >= 12 ? '25cm HiRISE' : maxZoomCap >= 10 ? '6m CTX' : '200m MOLA'})
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="5"
+                        max="12"
+                        step="1"
+                        value={maxZoomCap}
+                        onChange={(e) => setMaxZoomCap(parseInt(e.target.value))}
+                        className="w-full accent-cyan-400 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* LOD Subdivision Quality Bias */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-slate-400">Mesh Subdivision Density:</span>
+                        <span className="text-cyan-300 font-bold">{lodSubdivisionBias.toFixed(2)}x ({visibleTileCount} patches)</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.85"
+                        max="1.85"
+                        step="0.05"
+                        value={lodSubdivisionBias}
+                        onChange={(e) => setLodSubdivisionBias(parseFloat(e.target.value))}
+                        className="w-full accent-cyan-400 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 4. 3D Terrain Geometry & Camera Tilt */}
+                  <div className="bg-[#0b1629] border border-slate-800 rounded-xl p-2.5 space-y-2">
+                    <div className="text-[10px] font-bold text-amber-300 uppercase">
+                      TERRAIN GEOMETRY &amp; CAMERA
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-0.5">
+                        <span className="text-slate-400">3D Elevation Exaggeration:</span>
+                        <span className="text-amber-300 font-bold">{exaggeration.toFixed(1)}x</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1.0"
+                        max="6.0"
+                        step="0.2"
+                        value={exaggeration}
+                        onChange={(e) => setExaggeration(parseFloat(e.target.value))}
+                        className="w-full accent-amber-400 cursor-pointer"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-0.5">
+                        <span className="text-slate-400">Camera 3D Pitch Tilt:</span>
+                        <span className="text-cyan-300 font-bold">{cameraTiltUI}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="65"
+                        step="1"
+                        value={cameraTiltUI}
+                        onChange={(e) => handleTiltChange(parseInt(e.target.value))}
+                        className="w-full accent-cyan-400 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 5. Sun Illumination & Atmosphere */}
+                  <div className="bg-[#0b1629] border border-slate-800 rounded-xl p-2.5 space-y-2">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="font-bold text-amber-300 uppercase">SOLAR ILLUMINATION</span>
+                      <button
+                        onClick={() => setSyncRealMarsTime(!syncRealMarsTime)}
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer ${
+                          syncRealMarsTime
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                        }`}
+                      >
+                        {syncRealMarsTime ? 'LIVE EPHEMERIS' : 'MANUAL SUN'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="flex justify-between text-[9px]">
+                          <span className="text-slate-400">Sunlight:</span>
+                          <span className="text-amber-300">{sunIntensity.toFixed(1)}x</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="5.0"
+                          step="0.1"
+                          value={sunIntensity}
+                          onChange={(e) => setSunIntensity(parseFloat(e.target.value))}
+                          className="w-full accent-amber-400 cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-[9px]">
+                          <span className="text-slate-400">Sky Fill:</span>
+                          <span className="text-amber-300">{ambientIntensity.toFixed(2)}x</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.2"
+                          max="2.5"
+                          step="0.05"
+                          value={ambientIntensity}
+                          onChange={(e) => setAmbientIntensity(parseFloat(e.target.value))}
+                          className="w-full accent-amber-400 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-1 border-t border-slate-800 space-y-1.5 text-[10px]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-300">Martian Atmosphere Scattering</span>
+                        <button
+                          onClick={() => setShowAtmosphere(!showAtmosphere)}
+                          className={`px-2 py-0.5 rounded text-[9px] font-bold cursor-pointer ${
+                            showAtmosphere
+                              ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {showAtmosphere ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-300">Quadtree Tile Debug Borders</span>
+                        <button
+                          onClick={() => setShowTileBorders(!showTileBorders)}
+                          className={`px-2 py-0.5 rounded text-[9px] font-bold cursor-pointer ${
+                            showTileBorders
+                              ? 'bg-amber-500/30 text-amber-200 border border-amber-400'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {showTileBorders ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Panel Quick Toggle Buttons */}
@@ -5148,30 +5714,51 @@ export default function MarsGlobeViewer() {
             </button>
           </div>
         </header>
+        )}
 
         {/* ===================================================================
             MAIN 3-COLUMN TACTICAL COCKPIT BODY
            =================================================================== */}
         <div className="relative flex-1 flex overflow-hidden">
           {/* =================================================================
-              LEFT TACTICAL SIDEBAR
+              LEFT TACTICAL SIDEBAR (Stretchable on X-Axis with Proportional Scaling)
              ================================================================= */}
-          {leftPanelOpen && (
-            <aside className="w-70 bg-[#0b101b]/95 border-r border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-                  <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-[11px] uppercase tracking-wider font-mono">
-                    <Navigation className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>ROUND-TRIP PLANNER</span>
-                  </div>
-                  <button
-                    onClick={() => setLeftPanelOpen(false)}
-                    className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 text-xs font-mono transition-all cursor-pointer"
-                    title="Collapse Panel (Clean Map View)"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                </div>
+          {!isVisorMode && leftPanelOpen && (
+            <aside
+              style={{ width: `${leftPanelWidth}px` }}
+              className="relative bg-[#0b101b]/95 border-r border-slate-700/80 z-20 shrink-0 flex flex-col h-full select-none"
+            >
+              {/* Scrollable inner body with custom tactical Y-axis scrollbar & proportional element scaling */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden ares-scrollbar">
+                <div
+                  style={{ zoom: leftPanelScale }}
+                  className="p-3 min-h-full flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                      <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-[11px] uppercase tracking-wider font-mono">
+                        <Navigation className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>ROUND-TRIP PLANNER</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {leftPanelWidth !== 280 && (
+                          <button
+                            onClick={() => setLeftPanelWidth(280)}
+                            className="px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 text-[8.5px] font-mono font-bold text-cyan-200 cursor-pointer"
+                            title="Reset panel width to default (100%)"
+                          >
+                            {Math.round(leftPanelScale * 100)}%
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setLeftPanelOpen(false)}
+                          className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 text-xs font-mono transition-all cursor-pointer"
+                          title="Collapse Panel (Clean Map View)"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
 
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
@@ -5215,36 +5802,6 @@ export default function MarsGlobeViewer() {
                     </div>
                   ) : (
                     <>
-                      {/* Verified 1-Click Science Marswalks */}
-                      <div className="space-y-1.5">
-                        <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between">
-                          <span>1-CLICK SCIENCE MARSWALKS</span>
-                          <span className="text-[9px] font-mono text-slate-400">NASA PRESETS</span>
-                        </div>
-                        <div className="space-y-1">
-                          {PRESET_EVA_ROUTES.filter((r) => r.siteId === selectedSite.id).map((pr) => (
-                            <button
-                              key={pr.id}
-                              onClick={() => applyPresetEvaRoute(pr)}
-                              className="w-full text-left p-1.5 rounded-lg bg-[#0e1626] hover:bg-[#14233c] border border-slate-800 hover:border-cyan-400/60 transition-all flex flex-col gap-0.5 group cursor-pointer"
-                              title={pr.description}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-slate-200 group-hover:text-cyan-300">
-                                  {pr.name}
-                                </span>
-                                <span className="text-[9px] font-mono px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                                  {pr.scienceValueScore} SCI
-                                </span>
-                              </div>
-                              <div className="text-[9px] text-slate-400 truncate">
-                                {pr.scienceTarget}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
                       {/* Outbound + Return Dual Path Legend & Toggle */}
                       <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2 space-y-1.5">
                         <div className="flex items-center justify-between text-[10px]">
@@ -5265,12 +5822,163 @@ export default function MarsGlobeViewer() {
                         <div className="flex items-center justify-between text-[10px] font-mono">
                           <span className="flex items-center gap-1.5 text-cyan-300">
                             <span className="w-3 h-1 bg-cyan-400 rounded" />
-                            Outbound (A1 → B2)
+                            Outbound (A → B)
                           </span>
                           <span className="flex items-center gap-1.5 text-amber-300">
                             <span className="w-3 h-1 bg-amber-400 rounded" />
-                            Return (B2 → A1)
+                            Return (B → A)
                           </span>
+                        </div>
+                      </div>
+
+                      {/* =====================================================
+                          HIGHLIGHTED ORIGIN (A) & DESTINATION (B) COMMAND BOX
+                         ===================================================== */}
+                      <div className="relative rounded-2xl border-2 border-cyan-500/70 bg-gradient-to-b from-[#09182c] via-[#071120] to-[#1a0b16] p-3 shadow-[0_0_25px_rgba(0,240,255,0.18)] space-y-2.5">
+                        <div className="flex items-center justify-between border-b border-cyan-500/30 pb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                            <span className="text-[11px] font-extrabold tracking-wider text-white uppercase font-mono">
+                              ORIGIN &amp; DESTINATION
+                            </span>
+                          </div>
+                          <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 border border-cyan-400/50 text-[8.5px] font-mono font-bold text-cyan-200 uppercase">
+                            CLICK TO PICK
+                          </span>
+                        </div>
+
+                        {/* STEP 1: ORIGIN (A - START POINT) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[9.5px] font-mono font-bold">
+                            <span className="flex items-center gap-1.5 text-emerald-300">
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-500 text-slate-950 font-extrabold text-[8.5px]">
+                                FROM • A
+                              </span>
+                              <span>ORIGIN (START BASE)</span>
+                            </span>
+                            <span className="text-emerald-400/90 text-[9px]">
+                              {activeRouteData?.waypoints.find((w) => w.id === 'A')
+                                ? `${activeRouteData.waypoints.find((w) => w.id === 'A')?.elevM}m`
+                                : 'START'}
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() =>
+                              setPickingMode(pickingMode === 'START' ? 'NONE' : 'START')
+                            }
+                            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                              pickingMode === 'START'
+                                ? 'bg-emerald-500/30 border-emerald-300 text-white shadow-[0_0_20px_rgba(16,185,129,0.5)] animate-pulse'
+                                : 'bg-emerald-950/45 hover:bg-emerald-900/55 border-emerald-500/70 hover:border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="h-8 w-8 rounded-lg bg-emerald-500/25 border-2 border-emerald-400 flex flex-col items-center justify-center shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.35)]">
+                                <span className="text-xs font-mono font-extrabold text-emerald-200 leading-none">
+                                  A
+                                </span>
+                                <span className="text-[7px] font-mono text-emerald-300 uppercase">
+                                  START
+                                </span>
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-extrabold text-emerald-200 tracking-wide truncate">
+                                  {pickingMode === 'START'
+                                    ? 'CLICK MARS FOR ORIGIN...'
+                                    : 'ORIGIN • START BASE'}
+                                </div>
+                                <div className="text-[10px] font-mono font-bold text-slate-200">
+                                  {routeEndpoints.startLat.toFixed(3)}°N,{' '}
+                                  {routeEndpoints.startLon.toFixed(3)}°E
+                                </div>
+                              </div>
+                            </div>
+                            <span className="px-2 py-1 rounded-md bg-emerald-500/25 border border-emerald-400/70 text-emerald-200 font-mono text-[9px] font-bold shrink-0">
+                              {pickingMode === 'START' ? 'PICKING' : 'SET A'}
+                            </span>
+                          </button>
+                        </div>
+
+                        {/* Visual Route Connector & Swap A ↔ B Button */}
+                        <div className="relative flex items-center justify-center py-0.5">
+                          <div className="absolute inset-x-4 h-[1px] bg-gradient-to-r from-emerald-500/50 via-cyan-400/60 to-rose-500/50" />
+                          <button
+                            onClick={() => {
+                              setRouteEndpoints((prev) => ({
+                                startLat: prev.endLat,
+                                startLon: prev.endLon,
+                                endLat: prev.startLat,
+                                endLon: prev.startLon,
+                              }));
+                            }}
+                            className="relative z-10 px-3 py-1 rounded-full bg-[#06101e] hover:bg-cyan-950 border-2 border-cyan-400/70 hover:border-cyan-300 text-[9.5px] font-mono font-bold text-cyan-200 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(0,240,255,0.25)]"
+                            title="Reverse route direction: swap Origin (A) and Destination (B)"
+                          >
+                            <span>⇅</span>
+                            <span>REVERSE A ⇄ B</span>
+                          </button>
+                        </div>
+
+                        {/* STEP 2: DESTINATION (B - TARGET POINT) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[9.5px] font-mono font-bold">
+                            <span className="flex items-center gap-1.5 text-rose-300">
+                              <span className="px-1.5 py-0.2 rounded bg-rose-500 text-white font-extrabold text-[8.5px]">
+                                TO • B
+                              </span>
+                              <span>DESTINATION (TARGET)</span>
+                            </span>
+                            <span className="text-rose-400/90 text-[9px]">
+                              {activeRouteData?.waypoints.find((w) => w.id === 'B')
+                                ? `${activeRouteData.waypoints.find((w) => w.id === 'B')?.elevM}m`
+                                : 'TARGET'}
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => setPickingMode(pickingMode === 'END' ? 'NONE' : 'END')}
+                            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                              pickingMode === 'END'
+                                ? 'bg-rose-500/30 border-rose-300 text-white shadow-[0_0_20px_rgba(244,63,94,0.5)] animate-pulse'
+                                : 'bg-rose-950/45 hover:bg-rose-900/55 border-rose-500/70 hover:border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.2)]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="h-8 w-8 rounded-lg bg-rose-500/25 border-2 border-rose-400 flex flex-col items-center justify-center shrink-0 shadow-[0_0_10px_rgba(244,63,94,0.35)]">
+                                <span className="text-xs font-mono font-extrabold text-rose-200 leading-none">
+                                  B
+                                </span>
+                                <span className="text-[7px] font-mono text-rose-300 uppercase">
+                                  GOAL
+                                </span>
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-extrabold text-rose-200 tracking-wide truncate">
+                                  {pickingMode === 'END'
+                                    ? 'CLICK MARS FOR TARGET...'
+                                    : 'DESTINATION • TARGET'}
+                                </div>
+                                <div className="text-[10px] font-mono font-bold text-slate-200">
+                                  {routeEndpoints.endLat.toFixed(3)}°N,{' '}
+                                  {routeEndpoints.endLon.toFixed(3)}°E
+                                </div>
+                              </div>
+                            </div>
+                            <span className="px-2 py-1 rounded-md bg-rose-500/25 border border-rose-400/70 text-rose-200 font-mono text-[9px] font-bold shrink-0">
+                              {pickingMode === 'END' ? 'PICKING' : 'SET B'}
+                            </span>
+                          </button>
+                        </div>
+
+                        {/* Seamless Routing Tip inside highlighted card */}
+                        <div className="bg-[#050c16]/90 border border-cyan-500/30 rounded-lg px-2.5 py-1.5 text-[9px] font-mono text-cyan-200/90 leading-snug flex items-center gap-1.5">
+                          <Crosshair className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                          <div>
+                            <strong className="text-amber-300">Quick Pick:</strong> Right-Click map ={' '}
+                            <span className="text-rose-300 font-bold">Destination B</span> • Shift+Right-Click ={' '}
+                            <span className="text-emerald-300 font-bold">Origin A</span>
+                          </div>
                         </div>
                       </div>
 
@@ -5285,93 +5993,6 @@ export default function MarsGlobeViewer() {
                           <Download className="w-4 h-4 text-cyan-400" />
                           <span>EXPORT TRAVERSE (GPX / PDS4 XML)</span>
                         </button>
-                      </div>
-
-                      {/* ORIGIN: START (A1) */}
-                      <div>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 flex justify-between">
-                          <span>ORIGIN (A1)</span>
-                          <span className="text-[9px] font-mono text-emerald-400">START POINT</span>
-                        </div>
-                        <button
-                          onClick={() =>
-                            setPickingMode(pickingMode === 'START' ? 'NONE' : 'START')
-                          }
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all cursor-pointer ${
-                            pickingMode === 'START'
-                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200 animate-pulse'
-                              : 'bg-[#111827]/90 border-slate-700 hover:border-slate-500'
-                          }`}
-                        >
-                          <div>
-                            <div className="text-xs font-bold text-slate-100">
-                              {pickingMode === 'START' ? 'CLICK GLOBE FOR START...' : 'ORIGIN A1'}
-                            </div>
-                            <div className="text-[10px] font-mono text-slate-400">
-                              {routeEndpoints.startLat.toFixed(3)}°N,{' '}
-                              {routeEndpoints.startLon.toFixed(3)}°E
-                            </div>
-                          </div>
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/60 text-emerald-300 font-mono text-[10px] font-bold">
-                            A1
-                          </span>
-                        </button>
-                      </div>
-
-                      {/* Swap A ↔ B button */}
-                      <div className="flex justify-center -my-1">
-                        <button
-                          onClick={() => {
-                            setRouteEndpoints((prev) => ({
-                              startLat: prev.endLat,
-                              startLon: prev.endLon,
-                              endLat: prev.startLat,
-                              endLon: prev.startLon,
-                            }));
-                          }}
-                          className="px-3 py-0.5 rounded-full bg-slate-900 hover:bg-cyan-950/80 border border-slate-700 hover:border-cyan-500/60 text-[9px] font-mono text-slate-300 hover:text-cyan-300 transition-all flex items-center gap-1 cursor-pointer"
-                          title="Reverse route direction: swap Start and Destination"
-                        >
-                          <span>⇄</span>
-                          <span>SWAP A ↔ B</span>
-                        </button>
-                      </div>
-
-                      {/* DESTINATION (B2) */}
-                      <div>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 flex justify-between">
-                          <span>DESTINATION (B2)</span>
-                          <span className="text-[9px] font-mono text-rose-400">TARGET</span>
-                        </div>
-                        <button
-                          onClick={() => setPickingMode(pickingMode === 'END' ? 'NONE' : 'END')}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all cursor-pointer ${
-                            pickingMode === 'END'
-                              ? 'bg-rose-500/20 border-rose-400 text-rose-200 animate-pulse'
-                              : 'bg-[#111827]/90 border-slate-700 hover:border-slate-500'
-                          }`}
-                        >
-                          <div>
-                            <div className="text-xs font-bold text-slate-100">
-                              {pickingMode === 'END' ? 'CLICK GLOBE FOR END...' : 'DESTINATION B2'}
-                            </div>
-                            <div className="text-[10px] font-mono text-slate-400">
-                              {routeEndpoints.endLat.toFixed(3)}°N,{' '}
-                              {routeEndpoints.endLon.toFixed(3)}°E
-                            </div>
-                          </div>
-                          <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/60 text-rose-300 font-mono text-[10px] font-bold">
-                            B2
-                          </span>
-                        </button>
-                      </div>
-
-                      {/* Seamless Routing Tip */}
-                      <div className="bg-[#08101a] border border-cyan-900/60 rounded-lg p-2 text-[9px] font-mono text-cyan-300/90 leading-tight flex items-start gap-1.5">
-                        <Info className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
-                        <div>
-                          <strong className="text-cyan-200">Tip:</strong> Right-click anywhere on Mars to set Destination (B2), or Shift+Right-Click for Origin (A1).
-                        </div>
                       </div>
 
                       {/* UNTRAVERSABLE WARNING OR STEP-BY-STEP ROUND-TRIP CARDS */}
@@ -5496,7 +6117,27 @@ export default function MarsGlobeViewer() {
                 </div>
               </div>
             </div>
-          </aside>
+                </div>
+              </div>
+
+              {/* Interactive X-Axis Stretch Handle along the right edge of Left Panel */}
+              <div
+                onMouseDown={(e) => startPanelResize('LEFT', e)}
+                onDoubleClick={() => setLeftPanelWidth(280)}
+                title="Drag horizontally on X-axis to stretch Trip Planner (Double-click to reset)"
+                className={`absolute top-0 bottom-0 -right-1.5 w-3 z-30 cursor-ew-resize group flex items-center justify-center transition-colors ${
+                  activeResizingPanel === 'LEFT' ? 'bg-cyan-500/25' : 'hover:bg-cyan-500/15'
+                }`}
+              >
+                <div
+                  className={`w-[3px] h-14 rounded-full transition-all ${
+                    activeResizingPanel === 'LEFT'
+                      ? 'bg-cyan-300 shadow-[0_0_12px_#00f0ff] h-24'
+                      : 'bg-slate-600/70 group-hover:bg-cyan-400 group-hover:shadow-[0_0_10px_#00f0ff] group-hover:h-20'
+                  }`}
+                />
+              </div>
+            </aside>
           )}
 
           {/* =================================================================
@@ -5539,8 +6180,15 @@ export default function MarsGlobeViewer() {
                 rfCommsReport={rfCommsReport}
                 showRfCommsGrid={showRfCommsGrid}
                 showPanoMarkers={showPanoMarkers}
+                showWaypointLegends={showWaypointLegends}
+                showScienceLegends={showScienceLegends}
+                showHubLegends={showHubLegends}
+                showGraticuleAndScale={showGraticuleAndScale}
                 panoStations={ROVER_PANORAMA_STATIONS}
                 onSelectPanoStation={openRoverStreetView}
+                highDetailMode={highDetailMode}
+                renderScale={resolutionScale / 1.5}
+                maxZoomCap={maxZoomCap}
               />
             </div>
 
@@ -5554,8 +6202,8 @@ export default function MarsGlobeViewer() {
               }`}
             />
 
-            {/* Edge Tab Handle to Restore Left Panel when Collapsed */}
-            {!leftPanelOpen && (
+            {/* Edge Tab Handle to Restore Left Panel when Collapsed (Hidden in Visor HUD Mode) */}
+            {!isVisorMode && !leftPanelOpen && (
               <button
                 onClick={() => setLeftPanelOpen(true)}
                 className="absolute top-3 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#08101d]/90 backdrop-blur-md border border-cyan-500/50 hover:border-cyan-400 text-cyan-300 font-mono text-xs font-bold shadow-xl transition-all cursor-pointer hover:scale-105"
@@ -5567,8 +6215,8 @@ export default function MarsGlobeViewer() {
               </button>
             )}
 
-            {/* Edge Tab Handle to Restore Right Panel when Collapsed */}
-            {!rightPanelOpen && (
+            {/* Edge Tab Handle to Restore Right Panel when Collapsed (Hidden in Visor HUD Mode) */}
+            {!isVisorMode && !rightPanelOpen && (
               <button
                 onClick={() => setRightPanelOpen(true)}
                 className="absolute top-3 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#08101d]/90 backdrop-blur-md border border-cyan-500/50 hover:border-cyan-400 text-cyan-300 font-mono text-xs font-bold shadow-xl transition-all cursor-pointer hover:scale-105"
@@ -5581,11 +6229,11 @@ export default function MarsGlobeViewer() {
             )}
 
             {/* Interactive Picking Mode Floating Banner */}
-            {pickingMode !== 'NONE' && (
+            {!isVisorMode && pickingMode !== 'NONE' && (
               <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 pointer-events-auto bg-[#0a1424]/95 border-2 border-cyan-400 px-4 py-2 rounded-full shadow-[0_0_25px_rgba(0,240,255,0.4)] flex items-center gap-3 backdrop-blur-md animate-pulse">
                 <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
                 <span className="text-xs font-mono font-bold text-cyan-200 uppercase tracking-wide">
-                  CLICK ON MARS TERRAIN TO SET {pickingMode === 'START' ? 'ORIGIN (A1)' : 'DESTINATION (B2)'}
+                  CLICK ON MARS TERRAIN TO SET {pickingMode === 'START' ? 'ORIGIN (A)' : 'DESTINATION (B)'}
                 </span>
                 <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
                   (Or right-click anywhere anytime)
@@ -5599,11 +6247,11 @@ export default function MarsGlobeViewer() {
               </div>
             )}
 
-            {/* Minimalist Floating Route HUD Pill (Only when route is active - anchored at bottom to never collide with top menus!) */}
-            {routingEnabled && activeRouteData && !isGlobalCommandView && (
+            {/* Minimalist Floating Route HUD Pill (Hidden in Visor HUD Mode so it never collides with Visor HUD!) */}
+            {!isVisorMode && showRouteHudPill && routingEnabled && activeRouteData && !isGlobalCommandView && (
               <div
                 className={`absolute bottom-12 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 rounded-full bg-[#08101e]/90 backdrop-blur-md border border-cyan-500/40 shadow-[0_4px_25px_rgba(0,0,0,0.8),0_0_15px_rgba(0,240,255,0.15)] text-[11px] sm:text-xs font-mono max-w-[95%] transition-opacity duration-200 ${
-                  siteDropdownOpen || layerDropdownOpen || safetyDropdownOpen
+                  siteDropdownOpen || layerDropdownOpen || safetyDropdownOpen || settingsDropdownOpen
                     ? 'opacity-20 pointer-events-none'
                     : 'opacity-100'
                 }`}
@@ -5649,43 +6297,45 @@ export default function MarsGlobeViewer() {
             )}
 
             {/* 3D-Projected Expedition Hub Markers (Auto-hide when cursor is near them while viewing routes!) */}
-            <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
-              {projectedMarkers.map(({ site, x, y, visible }) => {
-                if (!visible) return null;
-                const nearMouse = isCursorNear(x, y, 125);
-                const isSelected = selectedSite.id === site.id;
-                return (
-                  <div
-                    key={site.id}
-                    style={{
-                      transform: `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`,
-                    }}
-                    className={`absolute top-0 left-0 -translate-x-1/2 -translate-y-full pb-2 transition-opacity duration-150 ${
-                      nearMouse
-                        ? 'opacity-0 pointer-events-none'
-                        : 'opacity-100 pointer-events-auto'
-                    }`}
-                  >
-                    <button
-                      onClick={() => flyToExpeditionSite(site)}
-                      className={`flex items-center gap-2 px-2.5 py-1 rounded-md backdrop-blur-md border transition-all shadow-lg hover:scale-105 ${
-                        isSelected
-                          ? 'bg-[#081526]/95 border-cyan-400 text-cyan-200 shadow-[0_0_15px_rgba(0,240,255,0.4)]'
-                          : 'bg-[#0b101b]/90 border-amber-500/60 text-slate-200 hover:border-cyan-400'
+            {showHubLegends && (
+              <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+                {projectedMarkers.map(({ site, x, y, visible }) => {
+                  if (!visible) return null;
+                  const nearMouse = isCursorNear(x, y, 125);
+                  const isSelected = selectedSite.id === site.id;
+                  return (
+                    <div
+                      key={site.id}
+                      style={{
+                        transform: `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`,
+                      }}
+                      className={`absolute top-0 left-0 -translate-x-1/2 -translate-y-full pb-2 transition-opacity duration-150 ${
+                        nearMouse
+                          ? 'opacity-0 pointer-events-none'
+                          : 'opacity-100 pointer-events-auto'
                       }`}
                     >
-                      <span
-                        className="h-2.5 w-2.5 rounded-full animate-pulse"
-                        style={{ backgroundColor: site.color }}
-                      />
-                      <span className="text-[11px] font-bold tracking-wider uppercase whitespace-nowrap">
-                        {site.shortLabel}
-                      </span>
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                      <button
+                        onClick={() => flyToExpeditionSite(site)}
+                        className={`flex items-center gap-2 px-2.5 py-1 rounded-md backdrop-blur-md border transition-all shadow-lg hover:scale-105 ${
+                          isSelected
+                            ? 'bg-[#081526]/95 border-cyan-400 text-cyan-200 shadow-[0_0_15px_rgba(0,240,255,0.4)]'
+                            : 'bg-[#0b101b]/90 border-amber-500/60 text-slate-200 hover:border-cyan-400'
+                        }`}
+                      >
+                        <span
+                          className="h-2.5 w-2.5 rounded-full animate-pulse"
+                          style={{ backgroundColor: site.color }}
+                        />
+                        <span className="text-[11px] font-bold tracking-wider uppercase whitespace-nowrap">
+                          {site.shortLabel}
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* 3D-Projected Subtle 360° Rover Panorama Optic Markers */}
             {showPanoMarkers && !isGlobalCommandView && !activeStreetViewStation && (
@@ -5734,7 +6384,7 @@ export default function MarsGlobeViewer() {
             )}
 
             {/* 3D-Projected Waypoints & Hazard Badges (Auto-hide when cursor approaches them!) */}
-            {routingEnabled && !isGlobalCommandView && (
+            {showWaypointLegends && routingEnabled && !isGlobalCommandView && (
               <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
                 {projectedRouteTags.map((tag) => {
                   if (!tag.visible) return null;
@@ -5782,7 +6432,7 @@ export default function MarsGlobeViewer() {
             )}
 
             {/* 3D-Projected Interactive Science Targets */}
-            {!isGlobalCommandView && !activeStreetViewStation && (
+            {showScienceLegends && !isGlobalCommandView && !activeStreetViewStation && (
               <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
                 {projectedScienceTargets.map(({ target, x, y, visible }) => {
                   if (!visible) return null;
@@ -5912,40 +6562,76 @@ export default function MarsGlobeViewer() {
           </main>
 
           {/* =================================================================
-              RIGHT TACTICAL SIDEBAR
+              RIGHT TACTICAL SIDEBAR (Stretchable on X-Axis with Proportional Scaling)
              ================================================================= */}
-          {rightPanelOpen && (
-            <aside className="w-72 bg-[#0b101b]/95 border-l border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
-              <div className="space-y-3">
-                <div className="border-b border-slate-800 pb-1 flex items-center justify-between">
-                  <div>
-                    <div className="text-[11px] font-bold tracking-wider text-slate-100 uppercase">
-                      EVA TELEMETRY
-                    </div>
-                    <div className="text-[9px] text-cyan-300 uppercase font-mono flex items-center gap-1 font-bold">
-                      <span>ASTRONAUT SADIA A. PUSPO</span>
-                      <span className="text-[7.5px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-normal">BGD</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 font-mono text-[9px] font-bold">
-                      {isSpeAlertActive ? (
-                        <span className="flex items-center gap-1 text-amber-300">
-                          <Zap className="w-2.5 h-2.5 text-amber-400" /> SPE
+          {!isVisorMode && rightPanelOpen && (
+            <aside
+              style={{ width: `${rightPanelWidth}px` }}
+              className="relative bg-[#0b101b]/95 border-l border-slate-700/80 z-20 shrink-0 flex flex-col h-full select-none"
+            >
+              {/* Interactive X-Axis Stretch Handle along the left edge of Right Panel */}
+              <div
+                onMouseDown={(e) => startPanelResize('RIGHT', e)}
+                onDoubleClick={() => setRightPanelWidth(288)}
+                title="Drag horizontally on X-axis to stretch EVA Telemetry (Double-click to reset)"
+                className={`absolute top-0 bottom-0 -left-1.5 w-3 z-30 cursor-ew-resize group flex items-center justify-center transition-colors ${
+                  activeResizingPanel === 'RIGHT' ? 'bg-cyan-500/25' : 'hover:bg-cyan-500/15'
+                }`}
+              >
+                <div
+                  className={`w-[3px] h-14 rounded-full transition-all ${
+                    activeResizingPanel === 'RIGHT'
+                      ? 'bg-cyan-300 shadow-[0_0_12px_#00f0ff] h-24'
+                      : 'bg-slate-600/70 group-hover:bg-cyan-400 group-hover:shadow-[0_0_10px_#00f0ff] group-hover:h-20'
+                  }`}
+                />
+              </div>
+
+              {/* Scrollable inner body with custom tactical Y-axis scrollbar & proportional element scaling */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden ares-scrollbar">
+                <div
+                  style={{ zoom: rightPanelScale }}
+                  className="p-3 min-h-full flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-3">
+                    <div className="border-b border-slate-800 pb-1 flex items-center justify-between">
+                      <div>
+                        <div className="text-[11px] font-bold tracking-wider text-slate-100 uppercase">
+                          EVA TELEMETRY
+                        </div>
+                        <div className="text-[9px] text-cyan-300 uppercase font-mono flex items-center gap-1 font-bold">
+                          <span>ASTRONAUT SADIA A. PUSPO</span>
+                          <span className="text-[7.5px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-normal">BGD</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {rightPanelWidth !== 288 && (
+                          <button
+                            onClick={() => setRightPanelWidth(288)}
+                            className="px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 text-[8.5px] font-mono font-bold text-cyan-200 cursor-pointer"
+                            title="Reset panel width to default (100%)"
+                          >
+                            {Math.round(rightPanelScale * 100)}%
+                          </button>
+                        )}
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 font-mono text-[9px] font-bold">
+                          {isSpeAlertActive ? (
+                            <span className="flex items-center gap-1 text-amber-300">
+                              <Zap className="w-2.5 h-2.5 text-amber-400" /> SPE
+                            </span>
+                          ) : (
+                            '● NOMINAL'
+                          )}
                         </span>
-                      ) : (
-                        '● NOMINAL'
-                      )}
-                    </span>
-                    <button
-                      onClick={() => setRightPanelOpen(false)}
-                      className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 text-xs font-mono transition-all cursor-pointer ml-1"
-                      title="Collapse Panel (Clean Map View)"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                        <button
+                          onClick={() => setRightPanelOpen(false)}
+                          className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 text-xs font-mono transition-all cursor-pointer ml-1"
+                          title="Collapse Panel (Clean Map View)"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
 
               {/* Real-Time Mars Ephemeris & Sun Sync Control */}
               <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2 text-xs">
@@ -6369,14 +7055,17 @@ export default function MarsGlobeViewer() {
                   <span className="text-cyan-300 font-bold">{liveTelemetry.frictionMu} μ</span>
                 </div>
               </div>
-            </div>
-          </aside>
+                  </div>
+                </div>
+              </div>
+            </aside>
           )}
         </div>
 
         {/* ===================================================================
-            BOTTOM COCKPIT STATUS BAR
+            BOTTOM COCKPIT STATUS BAR (Hidden in Visor HUD Mode)
            =================================================================== */}
+        {!isVisorMode && (
         <footer className="h-8 bg-[#0b101b]/95 border-t border-slate-700/80 px-4 flex items-center justify-between text-[11px] font-mono z-20 shrink-0">
           <div className="flex items-center gap-4">
             <span>
@@ -6409,6 +7098,13 @@ export default function MarsGlobeViewer() {
                 {syncRealMarsTime ? 'REAL-TIME SYNC' : 'MANUAL SUN'}
               </strong>
             </span>
+            <span className="text-slate-600 hidden md:inline">|</span>
+            <span className="hidden md:inline">
+              RES:{' '}
+              <strong className="text-cyan-300">
+                {resolutionScale}x DPI • Z{maxZoomCap} LOD
+              </strong>
+            </span>
           </div>
 
           <div className="hidden sm:flex items-center gap-3 text-slate-400">
@@ -6430,6 +7126,7 @@ export default function MarsGlobeViewer() {
             </span>
           </div>
         </footer>
+        )}
 
         {/* Option C: Real-Time Solar Glare Hazard Warning */}
         {solarGlareHazard.isHazard && (
@@ -6477,7 +7174,7 @@ export default function MarsGlobeViewer() {
             speReport={speReport}
             rfCommsReport={rfCommsReport}
             traverseMode={traverseMode}
-            destinationName={activeRouteData?.waypoints.find((w) => w.id === 'B2')?.label || 'Target Scarp'}
+            destinationName={activeRouteData?.waypoints.find((w) => w.id === 'B')?.label || 'Target Scarp'}
             distToDestKm={activeRouteData?.outboundDistKm || 4.5}
             bearingToDestDeg={312}
             onClose={toggleVisorMode}
@@ -6494,32 +7191,43 @@ export default function MarsGlobeViewer() {
           siteName={selectedSite.name}
         />
 
-        {/* Text AI Copilot for Astronaut Sadia A. Puspo */}
+        {/* NINI — Enhanced Tactical AI Copilot for Astronaut Sadia A. Puspo */}
         <AresTacticalAiCopilot
           isOpen={isAiCopilotOpen}
           onClose={() => setIsAiCopilotOpen(false)}
           astronautName="Sadia A. Puspo"
           routeData={activeRouteData}
+          routeEndpoints={routeEndpoints}
           currentSite={selectedSite.name}
+          currentSiteId={selectedSite.id}
           currentViewMode={viewMode}
           currentLayerMode={layerMode}
           traverseMode={traverseMode}
+          liveTelemetry={liveTelemetry}
+          marsEphemeris={marsEphemeris}
+          speReport={speReport}
+          isSpeAlertActive={isSpeAlertActive}
+          rfCommsReport={rfCommsReport}
+          showRfCommsGrid={showRfCommsGrid}
+          walkbackIsochrone={walkbackIsochrone}
+          resolutionScale={resolutionScale}
+          maxZoomCap={maxZoomCap}
           onExecuteCommand={handleCopilotCommand}
         />
 
-        {/* Floating Quick AI Copilot Launcher Button */}
-        {!isAiCopilotOpen && (
+        {/* Floating Quick NINI AI Copilot Launcher Button (Hidden in Visor HUD Mode) */}
+        {!isVisorMode && !isAiCopilotOpen && (
           <button
             onClick={() => setIsAiCopilotOpen(true)}
             className="fixed bottom-11 right-4 z-40 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0a1a30]/95 to-[#0e2444]/95 hover:from-cyan-900/90 hover:to-blue-900/90 border border-cyan-400/70 text-cyan-200 font-mono text-xs font-bold shadow-[0_0_20px_rgba(0,240,255,0.35)] transition-all cursor-pointer hover:scale-105 group"
-            title="Open ARES AI Tactical Copilot (Assisting Astronaut Sadia A. Puspo)"
+            title="Open Nini — ARES Tactical AI Copilot (Assisting Astronaut Sadia A. Puspo)"
           >
             <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
             </span>
             <Bot className="w-4 h-4 text-cyan-400 group-hover:rotate-12 transition-transform" />
-            <span className="tracking-wider">AI COPILOT</span>
+            <span className="tracking-wider">NINI • AI COPILOT</span>
           </button>
         )}
 

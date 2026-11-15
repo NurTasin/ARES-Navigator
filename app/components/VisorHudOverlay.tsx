@@ -193,7 +193,7 @@ export function VisorHudOverlay({
             >
               <div className="w-0 h-0 border-x-4 border-x-transparent border-b-6 border-b-cyan-300 animate-bounce" />
               <span className="text-[9px] font-mono font-bold text-cyan-200 bg-cyan-950/90 px-1 rounded border border-cyan-400/60">
-                B2
+                B
               </span>
             </div>
           )}
