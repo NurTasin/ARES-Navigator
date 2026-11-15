@@ -2,25 +2,30 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
+import {
+  ROVER_PANORAMA_STATIONS,
+  RoverPanoramaStation,
+  TacticalOpticIcon,
+  MarsRoverStreetViewModal,
+} from './MarsRoverStreetViewModal';
 
 // ============================================================================
 // CONSTANTS & PLANETARY GEOMETRY
 // ============================================================================
 const GLOBE_RADIUS = 100.0; // 100 units = 3,396.2 km Mars radius (~33.96 km / unit)
 const MARS_RADIUS_KM = 3396.2;
+const MARS_RADIUS_M = 3396200.0;
 
-// Selective Quality Zoom Caps:
-// - High-Detail Expedition Sites stream up to Zoom 12 (~2.5 km tiles, 6m CTX & 25cm HiRISE + 16-bit DEM)
-// - Rest of Mars is capped at Zoom 5 (~330 km tiles, 128px lightweight WMTS JPEG/PNG)
 const MAX_SITE_ZOOM = 12;
 const MAX_GLOBAL_ZOOM = 5;
 
-const TILE_SEGMENTS = 48; // 48x48 grid per tile (consistent border vertex count = 0 cracks/seams)
+const TILE_SEGMENTS = 48; // 48x48 grid per tile
 const DEM_GRID_SIZE = TILE_SEGMENTS + 1; // 49x49 vertices per tile
 const MAX_CONCURRENT_DOWNLOADS = 6;
 
 export interface ExpeditionSite {
   id: string;
+  code: string;
   name: string;
   shortLabel: string;
   role: 'PRIMARY LANDING SITE' | 'SECONDARY EXPEDITION HUB';
@@ -34,14 +39,13 @@ export interface ExpeditionSite {
   qualityBadge: string;
   description: string;
   color: string;
-  // Geographic bounding box [lonMin, latMin, lonMax, latMax] where Ultra/High-Detail tiles are unlocked
   roiBbox: [number, number, number, number];
-  // Site-specific NASA Trek high-resolution MRO CTX 6m WMTS layer
   ctxLayer: string;
   ctxBbox: [number, number, number, number];
-  // Optional sub-meter MRO HiRISE 25cm WMTS layer (Jezero Delta Front)
   hiriseLayer?: string;
   hiriseBbox?: [number, number, number, number];
+  // Default traversable endpoints [startLat, startLon, endLat, endLon]
+  defaultRoute: [number, number, number, number];
 }
 
 // ============================================================================
@@ -50,36 +54,39 @@ export interface ExpeditionSite {
 const EXPEDITION_SITES: ExpeditionSite[] = [
   {
     id: 'jezero-delta',
+    code: 'A',
     name: 'Jezero Crater Delta Front',
-    shortLabel: 'Jezero Delta Front',
+    shortLabel: 'Jezero Crater',
     role: 'PRIMARY LANDING SITE',
     subtitle: 'Perseverance Landing Site & Ancient Western River Delta',
     lat: 18.4447,
     lon: 77.4508,
     elevation: '-2,540 m',
-    targetAltitudeKm: 42,
-    targetTiltDeg: 38,
+    targetAltitudeKm: 38,
+    targetTiltDeg: 40,
     maxZoom: 12,
     qualityBadge: 'ULTRA-HD Z12 • 25cm HiRISE + 6m CTX',
     description:
-      'Primary Mars 2020 Perseverance Rover landing site at the western Neretva Vallis delta front. Streams full 25cm HiRISE + 6m CTX orthomosaics over 16-bit MOLA+HRSC DEM.',
+      'Primary Mars 2020 Perseverance Rover landing site at the western Neretva Vallis delta front. Streams full 25cm HiRISE + 6m CTX orthomosaics over seamless 16-bit MOLA+HRSC DEM.',
     color: '#00f0ff',
     roiBbox: [76.5, 17.5, 78.5, 19.5],
     ctxLayer: 'JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0',
     ctxBbox: [77.1605, 18.211, 77.6992, 18.7212],
     hiriseLayer: 'JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first_dd',
     hiriseBbox: [77.2229, 18.3068, 77.584, 18.6693],
+    defaultRoute: [18.425, 77.515, 18.468, 77.412],
   },
   {
     id: 'mount-sharp-gale',
+    code: 'Y',
     name: 'Mount Sharp (Gale Crater)',
-    shortLabel: 'Mount Sharp (Gale)',
+    shortLabel: 'Mount Sharp',
     role: 'SECONDARY EXPEDITION HUB',
     subtitle: 'Aeolis Mons 5.5 km Sedimentary Peak & Curiosity Hub',
-    lat: -5.08,
-    lon: 137.85,
+    lat: -4.72,
+    lon: 137.48,
     elevation: '-4,500 m to +1,000 m',
-    targetAltitudeKm: 115,
+    targetAltitudeKm: 85,
     targetTiltDeg: 40,
     maxZoom: 12,
     qualityBadge: 'HIGH-DETAIL Z12 • 6m CTX + 16-bit DEM',
@@ -89,79 +96,117 @@ const EXPEDITION_SITES: ExpeditionSite[] = [
     roiBbox: [135.18, -6.58, 139.25, -2.8],
     ctxLayer: 'Gale_CTX_BlockAdj_dd',
     ctxBbox: [135.1842, -6.5733, 139.2413, -2.8078],
+    defaultRoute: [-4.58, 137.38, -4.78, 137.56],
   },
   {
     id: 'arcadia-planitia',
+    code: 'B',
     name: 'Arcadia Planitia (ISRU Basecamp)',
-    shortLabel: 'Arcadia Planitia ISRU',
+    shortLabel: 'Arcadia Planitia',
     role: 'SECONDARY EXPEDITION HUB',
     subtitle: 'Shallow Subsurface Water-Ice Sheet & ISRU Propellant Hub',
     lat: 46.2,
     lon: -171.2,
     elevation: '-4,120 m',
-    targetAltitudeKm: 95,
-    targetTiltDeg: 32,
+    targetAltitudeKm: 85,
+    targetTiltDeg: 34,
     maxZoom: 12,
     qualityBadge: 'HIGH-DETAIL Z12 • 6m CTX + 16-bit DEM',
     description:
       'Flat volcanic plains in northern lowlands containing abundant shallow subsurface water ice—ideal for In-Situ Resource Utilization (ISRU) water extraction and human basecamp.',
-    color: '#38bdf8',
+    color: '#f59e0b',
     roiBbox: [-173.65, 44.5, -168.75, 47.9],
     ctxLayer: 'Arcadia_Planitia_CTX_BlockAdj_dd',
-    ctxBbox: [-173.6451, 44.508, -168.7549, 47.8921],
+    ctxBbox: [-173.6451, 44.508, -171.0, 47.8921],
+    defaultRoute: [46.08, -171.38, 46.32, -171.02],
   },
   {
     id: 'melas-chasma',
+    code: 'X',
     name: 'Melas Chasma (Valles Marineris)',
     shortLabel: 'Melas Chasma',
     role: 'SECONDARY EXPEDITION HUB',
     subtitle: 'Widest & Deepest Tectonic Canyon Segment of Valles Marineris',
-    lat: -11.7,
-    lon: -68.3,
-    elevation: '-9,100 m',
-    targetAltitudeKm: 130,
-    targetTiltDeg: 44,
+    lat: -10.65,
+    lon: -68.15,
+    elevation: '-4,900 m',
+    targetAltitudeKm: 95,
+    targetTiltDeg: 42,
     maxZoom: 12,
     qualityBadge: 'HIGH-DETAIL Z12 • 6m CTX + 16-bit DEM',
     description:
-      'Deepest central trough of Valles Marineris plunging 9 km below the surrounding plateau with layered interior deposits and high atmospheric pressure.',
-    color: '#f59e0b',
+      'Deepest central trough of Valles Marineris plunging below the surrounding plateau with layered interior deposits and high atmospheric pressure.',
+    color: '#38bdf8',
     roiBbox: [-71.95, -14.5, -64.87, -9.29],
     ctxLayer: 'Coprates_EMelas_Chasm_CTX_BlockAdj_dd',
     ctxBbox: [-71.7281, -13.392, -64.8715, -10.0079],
+    defaultRoute: [-10.52, -68.32, -10.76, -67.98],
   },
 ];
 
-// Extensible Layer Mode Architecture (ready for future Thermal Inertia, CO2 Ice, Mineralogy overlays)
-export type VisualLayerMode = 'realistic' | 'color_hillshade' | 'orbital_raw';
+export type VisualLayerMode =
+  | 'realistic'
+  | 'slope_radar'
+  | 'tactical_contour'
+  | 'color_hillshade'
+  | 'orbital_raw';
 
-export interface FutureOverlaySlot {
+export type TraverseMode = 'ROVER_AUTOPILOT' | 'ASTRONAUT_HIKE';
+export type PickingPointMode = 'NONE' | 'START' | 'END';
+
+export interface RouteWaypoint {
   id: string;
   label: string;
-  trekProductLabel: string;
-  status: 'planned';
+  lat: number;
+  lon: number;
+  elevM: number;
+  slopeDeg: number;
+  frictionMu: number;
+  distFromStartKm: number;
+  metabolicWatts: number;
+  speedKmh: number;
 }
 
-const FUTURE_SCIENTIFIC_LAYERS: FutureOverlaySlot[] = [
-  {
-    id: 'thermal_inertia',
-    label: 'TES Thermal Inertia',
-    trekProductLabel: 'TES_Thermal_Inertia',
-    status: 'planned',
-  },
-  {
-    id: 'co2_ice_albedo',
-    label: 'CO₂ / Surface Albedo',
-    trekProductLabel: 'Mars_MGS_TES_Albedo_mosaic_global_7410m',
-    status: 'planned',
-  },
-  {
-    id: 'themis_night_ir',
-    label: 'THEMIS Night Thermal IR',
-    trekProductLabel: 'THEMIS_NightIR_ControlledMosaics_100m_v2_oct2018',
-    status: 'planned',
-  },
-];
+export interface RouteSegmentSummary {
+  id: string;
+  leg: 'OUTBOUND' | 'RETURN';
+  title: string;
+  distKm: number;
+  avgSlopeDeg: number;
+  maxSlopeDeg: number;
+  maxPitchDeg: number;
+  frictionMu: number;
+  status: 'SAFE' | 'CAUTION' | 'HAZARD';
+}
+
+export interface RouteProfileSample {
+  distKm: number;
+  elevM: number;
+  slopeDeg: number;
+  frictionMu: number;
+  slipRiskPct: number;
+  metabolicWatts: number;
+  leg: 'OUTBOUND' | 'RETURN';
+}
+
+export interface ComputedRoundTripRoute {
+  mode: TraverseMode;
+  isTraversable: boolean;
+  failureReason: string | null;
+  outboundPoints: { lat: number; lon: number; elevM: number; slopeDeg: number; pitchDeg: number; frictionMu: number }[];
+  returnPoints: { lat: number; lon: number; elevM: number; slopeDeg: number; pitchDeg: number; frictionMu: number }[];
+  waypoints: RouteWaypoint[];
+  segments: RouteSegmentSummary[];
+  profile: RouteProfileSample[];
+  outboundDistKm: number;
+  returnDistKm: number;
+  totalRoundTripKm: number;
+  estRoundTripTimeMin: number;
+  maxSlopeDeg: number;
+  avgFrictionMu: number;
+  estEnergyWh: number;
+  hazardPoints: { id: string; label: string; lat: number; lon: number; elevM: number; slopeDeg: number }[];
+}
 
 export interface ProjectedMarkerPos {
   site: ExpeditionSite;
@@ -169,6 +214,17 @@ export interface ProjectedMarkerPos {
   y: number;
   visible: boolean;
   distKm: number;
+}
+
+export interface ProjectedRouteTag {
+  id: string;
+  text: string;
+  subtext?: string;
+  kind: 'WAYPOINT' | 'HAZARD';
+  color: string;
+  x: number;
+  y: number;
+  visible: boolean;
 }
 
 function normalizeLon(lon: number): number {
@@ -217,11 +273,6 @@ function boxesIntersect(
   return lonMinA < lonMaxB && lonMaxA > lonMinB && latMinA < latMaxB && latMaxA > latMinB;
 }
 
-/**
- * Checks whether a quadtree tile intersects any of the 4 High-Detail Expedition Sites.
- * Returns the matching ExpeditionSite (unlocking Zoom 12 + 256px textures + CTX/HiRISE + 16-bit DEM),
- * or null for standard global background tiles (capped at Zoom 5 + 128px lightweight textures).
- */
 function findIntersectingExpeditionSite(
   lonMin: number,
   latMin: number,
@@ -237,11 +288,533 @@ function findIntersectingExpeditionSite(
   return null;
 }
 
+function surfaceDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = (normalizeLon(lon2 - lon1) * Math.PI) / 180;
+  const midLat = (((lat1 + lat2) * 0.5) * Math.PI) / 180;
+  const dx = dLon * Math.cos(midLat) * MARS_RADIUS_KM;
+  const dy = dLat * MARS_RADIUS_KM;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 // ============================================================================
-// SHARED IN-MEMORY TILE CACHE & PRIORITY SCHEDULER (LAZY WATCHED-ONLY LOADING)
+// REAL-TIME ASTRONOMICAL MARS CLOCK & EPHEMERIS (NASA GISS MARS24 ALGORITHM)
+// ============================================================================
+export interface RealMarsEphemeris {
+  msd: number; // Mars Sol Date
+  perseveranceSol: number; // Mars 2020 Sol (landed Feb 18, 2021, MSD 52303.99)
+  curiositySol: number; // MSL Curiosity Sol (landed Aug 6, 2012, MSD 49268.90)
+  mtcStr: string; // Coordinated Mars Time (at 0° Prime Meridian)
+  localSolarTimeStr: string; // Local True Solar Time at watched longitude
+  localHourFloat: number;
+  freezeCountdownStr: string; // Time until local nightfall (-100°C drop) or sunrise
+  isDaylightAtFocus: boolean;
+  subsolarLat: number; // Real-time subsolar latitude on Mars right now
+  subsolarLon: number; // Real-time subsolar east longitude on Mars right now
+}
+
+function computeRealMarsTimeAndSun(
+  focusLonEast: number,
+  nowMs: number = Date.now()
+): RealMarsEphemeris {
+  const jdUT = 2440587.5 + nowMs / 86400000.0;
+  const jdTT = jdUT + 69.184 / 86400.0;
+  const dJ2000 = jdTT - 2451545.0;
+
+  // 1. Mars Mean Anomaly (M) & Fiction Mean Sun (alpha_FMS) in degrees
+  const Mdeg = (19.3871 + 0.52402073 * dJ2000) % 360.0;
+  const Mrad = (Mdeg * Math.PI) / 180.0;
+  const alphaFMS = (270.3871 + 0.524038496 * dJ2000) % 360.0;
+
+  // 2. Equation of Center (v - M) & Areocentric Solar Longitude (L_s)
+  const vMinusM =
+    (10.691 + 3.0e-7 * dJ2000) * Math.sin(Mrad) +
+    0.623 * Math.sin(2 * Mrad) +
+    0.05 * Math.sin(3 * Mrad) +
+    0.005 * Math.sin(4 * Mrad) +
+    0.0005 * Math.sin(5 * Mrad);
+  const LsDeg = (alphaFMS + vMinusM + 360.0) % 360.0;
+  const LsRad = (LsDeg * Math.PI) / 180.0;
+
+  // 3. Equation of Time (EOT) in degrees
+  const eotDeg =
+    2.861 * Math.sin(2 * LsRad) -
+    0.071 * Math.sin(4 * LsRad) +
+    0.002 * Math.sin(6 * LsRad) -
+    vMinusM;
+
+  // 4. Mars Sol Date (MSD) & Coordinated Mars Time (MTC)
+  const msd = (dJ2000 - 4.5) / 1.0274912517 + 44796.0 - 0.0009626;
+  const perseveranceSol = Math.floor(msd - 52303.99);
+  const curiositySol = Math.floor(msd - 49268.9);
+
+  const mtcHours = (((msd % 1.0) + 1.0) % 1.0) * 24.0;
+
+  // 5. Subsolar Latitude (declination) & Subsolar East Longitude on Mars right now
+  const obliquityRad = (25.1919 * Math.PI) / 180.0;
+  const subsolarLat = (Math.asin(Math.sin(obliquityRad) * Math.sin(LsRad)) * 180.0) / Math.PI;
+  const subsolarLon = normalizeLon(-(mtcHours * 15.0 - 180.0 + eotDeg));
+
+  // 6. Local True Solar Time (LTST) at watched longitude
+  const localHourFloat = ((mtcHours + focusLonEast / 15.0 + eotDeg / 15.0) % 24.0 + 24.0) % 24.0;
+
+  const formatHMS = (hFloat: number) => {
+    const hh = Math.floor(hFloat);
+    const mm = Math.floor((hFloat - hh) * 60.0);
+    const ss = Math.floor(((hFloat - hh) * 60.0 - mm) * 60.0);
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  };
+
+  const isDaylightAtFocus = localHourFloat >= 6.0 && localHourFloat < 18.2;
+  let freezeCountdownStr: string;
+  if (isDaylightAtFocus) {
+    const remSolHours = (18.2 - localHourFloat) * 1.02749;
+    const rH = Math.floor(remSolHours);
+    const rM = Math.floor((remSolHours - rH) * 60);
+    freezeCountdownStr = `FREEZE IN ${String(rH).padStart(2, '0')}h ${String(rM).padStart(2, '0')}m`;
+  } else {
+    const hrsToDawn =
+      (localHourFloat < 6.0 ? 6.0 - localHourFloat : 30.0 - localHourFloat) * 1.02749;
+    const rH = Math.floor(hrsToDawn);
+    const rM = Math.floor((hrsToDawn - rH) * 60);
+    freezeCountdownStr = `NIGHT (-98°C) • DAWN ${String(rH).padStart(2, '0')}h ${String(rM).padStart(2, '0')}m`;
+  }
+
+  return {
+    msd,
+    perseveranceSol,
+    curiositySol,
+    mtcStr: `${formatHMS(mtcHours)} MTC`,
+    localSolarTimeStr: `${formatHMS(localHourFloat)} LTST`,
+    localHourFloat,
+    freezeCountdownStr,
+    isDaylightAtFocus,
+    subsolarLat,
+    subsolarLon,
+  };
+}
+
+// ============================================================================
+// UNIFIED C1-CONTINUOUS BICUBIC ELEVATION & SLOPE FIELD (ZERO TILE SEAMS!)
+// ============================================================================
+/**
+ * Why tile borders previously showed slope lines or cracks:
+ * Computing elevation or slope inside each tile independently caused boundary jumps
+ * between tiles of different zoom levels or at tile borders (r=0, r=48).
+ *
+ * Solution:
+ * `UnifiedMarsTerrainField` maintains:
+ *  1) A single global continuous DEM grid (512x256, smoothed from MOLA WMTS z=0)
+ *  2) A single 256x256 16-bit Signed Integer Master DEM for each of the 4 Expedition Sites,
+ *     smoothly feathered into the global DEM along the outer 15% ROI margin.
+ *  3) Catmull-Rom Bicubic Interpolation (`sampleBicubic`) so BOTH elevation z(lat, lon)
+ *     and slope theta(lat, lon) are 100% C1-continuous across every tile boundary on Mars!
+ */
+class UnifiedMarsTerrainField {
+  private globalDem: Float32Array;
+  private readonly globalW = 512;
+  private readonly globalH = 256;
+  public isGlobalLoaded = false;
+
+  private siteDems = new Map<string, Float32Array>();
+  private siteLoading = new Set<string>();
+  private readonly siteSize = 256;
+  private onDemUpdated?: () => void;
+
+  constructor(onDemUpdated?: () => void) {
+    this.onDemUpdated = onDemUpdated;
+    this.globalDem = new Float32Array(this.globalW * this.globalH).fill(-1800);
+    this.loadGlobalDem();
+  }
+
+  private async loadGlobalDem() {
+    const [westImg, eastImg] = await Promise.all([
+      fetchCachedImage(
+        'https://trek.nasa.gov/tiles/Mars/EQ/mola128_mola64_merge_90Nto90S_SimpleC_clon0/1.0.0/default/default028mm/0/0/0.png'
+      ),
+      fetchCachedImage(
+        'https://trek.nasa.gov/tiles/Mars/EQ/mola128_mola64_merge_90Nto90S_SimpleC_clon0/1.0.0/default/default028mm/0/0/1.png'
+      ),
+    ]);
+
+    if (!westImg || !eastImg) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = this.globalW;
+    canvas.height = this.globalH;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(westImg, 0, 0, 256, 256);
+    ctx.drawImage(eastImg, 256, 0, 256, 256);
+    const data = ctx.getImageData(0, 0, this.globalW, this.globalH).data;
+
+    const raw = new Float32Array(this.globalW * this.globalH);
+    for (let i = 0; i < raw.length; i++) {
+      raw[i] = data[i * 4] * 55.08 - 7004.45;
+    }
+
+    // Apply 2 passes of separable 5-tap Gaussian smoothing to remove 8-bit quantization steps
+    const temp = new Float32Array(raw.length);
+    for (let pass = 0; pass < 2; pass++) {
+      const src = pass === 0 ? raw : this.globalDem;
+      for (let y = 0; y < this.globalH; y++) {
+        for (let x = 0; x < this.globalW; x++) {
+          const xm2 = (x - 2 + this.globalW) % this.globalW;
+          const xm1 = (x - 1 + this.globalW) % this.globalW;
+          const xp1 = (x + 1) % this.globalW;
+          const xp2 = (x + 2) % this.globalW;
+          temp[y * this.globalW + x] =
+            (src[y * this.globalW + xm2] +
+              4 * src[y * this.globalW + xm1] +
+              6 * src[y * this.globalW + x] +
+              4 * src[y * this.globalW + xp1] +
+              src[y * this.globalW + xp2]) /
+            16.0;
+        }
+      }
+      for (let y = 0; y < this.globalH; y++) {
+        const ym2 = Math.max(0, y - 2);
+        const ym1 = Math.max(0, y - 1);
+        const yp1 = Math.min(this.globalH - 1, y + 1);
+        const yp2 = Math.min(this.globalH - 1, y + 2);
+        for (let x = 0; x < this.globalW; x++) {
+          this.globalDem[y * this.globalW + x] =
+            (temp[ym2 * this.globalW + x] +
+              4 * temp[ym1 * this.globalW + x] +
+              6 * temp[y * this.globalW + x] +
+              4 * temp[yp1 * this.globalW + x] +
+              temp[yp2 * this.globalW + x]) /
+            16.0;
+        }
+      }
+    }
+
+    this.isGlobalLoaded = true;
+    this.onDemUpdated?.();
+  }
+
+  private static decodeGeoTiffS16(buf: ArrayBuffer, fallbackSize: number): Float32Array | null {
+    if (buf.byteLength < 16) return null;
+    const view = new DataView(buf);
+    const b0 = view.getUint8(0);
+    const b1 = view.getUint8(1);
+    const littleEndian = b0 === 0x49 && b1 === 0x49; // 'II'
+    const magic = view.getUint16(2, littleEndian);
+    if (magic !== 42) return null;
+
+    const ifdOffset = view.getUint32(4, littleEndian);
+    if (ifdOffset + 2 > buf.byteLength) return null;
+    const numEntries = view.getUint16(ifdOffset, littleEndian);
+
+    let imgW = fallbackSize;
+    let imgH = fallbackSize;
+    let tileW = 0;
+    let tileH = 0;
+    let tileOffsets: number[] = [];
+    let stripOffsets: number[] = [];
+    let rowsPerStrip = 0;
+
+    const readTagUintArray = (type: number, count: number, valOrOffset: number): number[] => {
+      const out: number[] = [];
+      if (count === 1) {
+        out.push(valOrOffset);
+        return out;
+      }
+      const elemSize = type === 3 ? 2 : 4;
+      if (valOrOffset + count * elemSize > buf.byteLength) return out;
+      for (let i = 0; i < count; i++) {
+        const off = valOrOffset + i * elemSize;
+        out.push(
+          type === 3 ? view.getUint16(off, littleEndian) : view.getUint32(off, littleEndian)
+        );
+      }
+      return out;
+    };
+
+    for (let i = 0; i < numEntries; i++) {
+      const entryOff = ifdOffset + 2 + i * 12;
+      if (entryOff + 12 > buf.byteLength) break;
+      const tag = view.getUint16(entryOff, littleEndian);
+      const type = view.getUint16(entryOff + 2, littleEndian);
+      const count = view.getUint32(entryOff + 4, littleEndian);
+      const valOrOff =
+        type === 3 && count === 1
+          ? view.getUint16(entryOff + 8, littleEndian)
+          : view.getUint32(entryOff + 8, littleEndian);
+
+      if (tag === 256) imgW = valOrOff;
+      else if (tag === 257) imgH = valOrOff;
+      else if (tag === 273) stripOffsets = readTagUintArray(type, count, valOrOff);
+      else if (tag === 278) rowsPerStrip = valOrOff;
+      else if (tag === 322) tileW = valOrOff;
+      else if (tag === 323) tileH = valOrOff;
+      else if (tag === 324) tileOffsets = readTagUintArray(type, count, valOrOff);
+    }
+
+    const outGrid = new Float32Array(imgW * imgH);
+
+    // Case 1: Tiled GeoTIFF (ArcGIS ImageServer returns 128x128 internal TIFF tiles!)
+    if (tileW > 0 && tileH > 0 && tileOffsets.length > 0) {
+      const tilesAcross = Math.ceil(imgW / tileW);
+      for (let tIdx = 0; tIdx < tileOffsets.length; tIdx++) {
+        const byteOff = tileOffsets[tIdx];
+        const tx0 = (tIdx % tilesAcross) * tileW;
+        const ty0 = Math.floor(tIdx / tilesAcross) * tileH;
+        const copyW = Math.min(tileW, imgW - tx0);
+        const copyH = Math.min(tileH, imgH - ty0);
+
+        for (let r = 0; r < copyH; r++) {
+          const rowByteOff = byteOff + r * tileW * 2;
+          if (rowByteOff + copyW * 2 > buf.byteLength) break;
+          const dstRowBase = (ty0 + r) * imgW + tx0;
+          for (let c = 0; c < copyW; c++) {
+            const sample = view.getInt16(rowByteOff + c * 2, littleEndian);
+            outGrid[dstRowBase + c] = sample < -15000 ? -2500 : sample;
+          }
+        }
+      }
+      return outGrid;
+    }
+
+    // Case 2: Stripped GeoTIFF fallback
+    if (stripOffsets.length > 0) {
+      const rps = rowsPerStrip > 0 ? rowsPerStrip : imgH;
+      for (let sIdx = 0; sIdx < stripOffsets.length; sIdx++) {
+        const byteOff = stripOffsets[sIdx];
+        const y0 = sIdx * rps;
+        const copyH = Math.min(rps, imgH - y0);
+        for (let r = 0; r < copyH; r++) {
+          const rowByteOff = byteOff + r * imgW * 2;
+          if (rowByteOff + imgW * 2 > buf.byteLength) break;
+          const dstRowBase = (y0 + r) * imgW;
+          for (let c = 0; c < imgW; c++) {
+            const sample = view.getInt16(rowByteOff + c * 2, littleEndian);
+            outGrid[dstRowBase + c] = sample < -15000 ? -2500 : sample;
+          }
+        }
+      }
+      return outGrid;
+    }
+
+    return null;
+  }
+
+  public ensureSiteMasterDemLoaded(site: ExpeditionSite) {
+    if (this.siteDems.has(site.id) || this.siteLoading.has(site.id)) return;
+    this.siteLoading.add(site.id);
+
+    const [lonMin, latMin, lonMax, latMax] = site.roiBbox;
+    const url = `https://trek.nasa.gov/mars/trekarcgis/rest/services/Mars_MOLA_blend200ppx_HRSC_DEM_clon0dd_200mpp_lzw/ImageServer/exportImage?bbox=${lonMin},${latMin},${lonMax},${latMax}&bboxSR=104905&size=${this.siteSize},${this.siteSize}&imageSR=104905&format=tiff&pixelType=S16&f=image`;
+
+    fetch(url)
+      .then((res) => (res.ok ? res.arrayBuffer() : null))
+      .then((buf) => {
+        if (!buf) return;
+        const floatGrid = UnifiedMarsTerrainField.decodeGeoTiffS16(buf, this.siteSize);
+        if (!floatGrid) return;
+
+        // Light 3x3 smoothing pass so integer meter steps are C1 smooth for Slope Radar
+        const smoothed = new Float32Array(floatGrid.length);
+        const N = this.siteSize;
+        for (let y = 0; y < N; y++) {
+          const y0 = Math.max(0, y - 1);
+          const y1 = Math.min(N - 1, y + 1);
+          for (let x = 0; x < N; x++) {
+            const x0 = Math.max(0, x - 1);
+            const x1 = Math.min(N - 1, x + 1);
+            smoothed[y * N + x] =
+              (floatGrid[y0 * N + x0] +
+                2 * floatGrid[y0 * N + x] +
+                floatGrid[y0 * N + x1] +
+                2 * floatGrid[y * N + x0] +
+                4 * floatGrid[y * N + x] +
+                2 * floatGrid[y * N + x1] +
+                floatGrid[y1 * N + x0] +
+                2 * floatGrid[y1 * N + x] +
+                floatGrid[y1 * N + x1]) /
+              16.0;
+          }
+        }
+
+        this.siteDems.set(site.id, smoothed);
+        this.onDemUpdated?.();
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.siteLoading.delete(site.id);
+      });
+  }
+
+  private static cubicHermite(p0: number, p1: number, p2: number, p3: number, t: number): number {
+    const a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
+    const b = p0 - 2.5 * p1 + 2.0 * p2 - 0.5 * p3;
+    const c = -0.5 * p0 + 0.5 * p2;
+    const d = p1;
+    return ((a * t + b) * t + c) * t + d;
+  }
+
+  private sampleBicubicGrid(
+    grid: Float32Array,
+    w: number,
+    h: number,
+    uNorm: number,
+    vNorm: number,
+    wrapX: boolean
+  ): number {
+    const fx = uNorm * (w - 1);
+    const fy = vNorm * (h - 1);
+    const x1 = Math.floor(fx);
+    const y1 = Math.floor(fy);
+    const tx = fx - x1;
+    const ty = fy - y1;
+
+    const getX = (x: number) =>
+      wrapX ? ((x % w) + w) % w : Math.max(0, Math.min(w - 1, x));
+    const getY = (y: number) => Math.max(0, Math.min(h - 1, y));
+
+    const rowVals = [0, 0, 0, 0];
+    for (let j = -1; j <= 2; j++) {
+      const y = getY(y1 + j);
+      const p0 = grid[y * w + getX(x1 - 1)];
+      const p1 = grid[y * w + getX(x1)];
+      const p2 = grid[y * w + getX(x1 + 1)];
+      const p3 = grid[y * w + getX(x1 + 2)];
+      rowVals[j + 1] = UnifiedMarsTerrainField.cubicHermite(p0, p1, p2, p3, tx);
+    }
+
+    return UnifiedMarsTerrainField.cubicHermite(
+      rowVals[0],
+      rowVals[1],
+      rowVals[2],
+      rowVals[3],
+      ty
+    );
+  }
+
+  /**
+   * Evaluates exact C1-continuous elevation in meters at ANY (lat, lon) on Mars.
+   * Because this function depends ONLY on (lat, lon) and NEVER on tile indices,
+   * all adjacent tiles share 100% identical border elevations and slopes!
+   */
+  public getElevationMeters(lat: number, lon: number): number {
+    const nLon = normalizeLon(lon);
+    const cLat = Math.max(-89.99, Math.min(89.99, lat));
+
+    const uG = (nLon + 180.0) / 360.0;
+    const vG = (90.0 - cLat) / 180.0;
+    const globalElev = this.sampleBicubicGrid(
+      this.globalDem,
+      this.globalW,
+      this.globalH,
+      uG,
+      vG,
+      true
+    );
+
+    // Check if inside any of the 4 Expedition Sites with a loaded 16-bit Master DEM
+    for (const site of EXPEDITION_SITES) {
+      const [lonMin, latMin, lonMax, latMax] = site.roiBbox;
+      if (nLon >= lonMin && nLon <= lonMax && cLat >= latMin && cLat <= latMax) {
+        const siteGrid = this.siteDems.get(site.id);
+        if (!siteGrid) {
+          this.ensureSiteMasterDemLoaded(site);
+          return globalElev;
+        }
+
+        const uS = (nLon - lonMin) / (lonMax - lonMin);
+        const vS = (latMax - cLat) / (latMax - latMin);
+        const siteElev = this.sampleBicubicGrid(
+          siteGrid,
+          this.siteSize,
+          this.siteSize,
+          uS,
+          vS,
+          false
+        );
+
+        // Smooth cosine feathering along the outer 12% margin of the ROI box so
+        // the transition from global z=5 to site z=6..12 has ZERO step or seam!
+        const edgeDist = Math.min(uS, 1.0 - uS, vS, 1.0 - vS);
+        const margin = 0.12;
+        if (edgeDist >= margin) return siteElev;
+        const t = edgeDist / margin;
+        const smoothW = t * t * (3.0 - 2.0 * t);
+        return globalElev * (1.0 - smoothW) + siteElev * smoothW;
+      }
+    }
+
+    return globalElev;
+  }
+
+  /**
+   * Evaluates physical metric slope (degrees), directional pitch, lateral roll,
+   * and surface friction coefficient at ANY (lat, lon) without tile-edge artifacts.
+   */
+  public sampleMetricsAt(
+    lat: number,
+    lon: number,
+    headingDeg: number = 0
+  ): {
+    elevM: number;
+    slopeDeg: number;
+    pitchDeg: number;
+    rollDeg: number;
+    dzEast: number;
+    dzNorth: number;
+    frictionMu: number;
+  } {
+    const elevM = this.getElevationMeters(lat, lon);
+
+    // Use a consistent 180-meter metric stencil in (lat, lon) across the entire planet
+    const dLatDeg = 0.003; // ~177 meters on Mars
+    const cosLat = Math.max(0.15, Math.cos((lat * Math.PI) / 180.0));
+    const dLonDeg = dLatDeg / cosLat;
+    const stepMeters = ((dLatDeg * Math.PI) / 180.0) * MARS_RADIUS_M;
+
+    const zN = this.getElevationMeters(lat + dLatDeg, lon);
+    const zS = this.getElevationMeters(lat - dLatDeg, lon);
+    const zE = this.getElevationMeters(lat, lon + dLonDeg);
+    const zW = this.getElevationMeters(lat, lon - dLonDeg);
+
+    const dzEast = (zE - zW) / (2.0 * stepMeters);
+    const dzNorth = (zN - zS) / (2.0 * stepMeters);
+
+    const slopeRad = Math.atan(Math.sqrt(dzEast * dzEast + dzNorth * dzNorth));
+    const slopeDeg = slopeRad * (180.0 / Math.PI);
+
+    const hRad = (headingDeg * Math.PI) / 180.0;
+    const uEast = Math.sin(hRad);
+    const uNorth = Math.cos(hRad);
+    const rEast = Math.cos(hRad);
+    const rNorth = -Math.sin(hRad);
+
+    const pitchDeg = Math.atan(dzEast * uEast + dzNorth * uNorth) * (180.0 / Math.PI);
+    const rollDeg = Math.atan(dzEast * rEast + dzNorth * rNorth) * (180.0 / Math.PI);
+
+    // Local Topographic Position Index (TPI) for depression sand-trap detection
+    const meanNeigh = (zN + zS + zE + zW) * 0.25;
+    const tpi = elevM - meanNeigh;
+    const sandTrapScore = Math.max(0.0, Math.min(1.0, -tpi / 8.0));
+
+    const frictionMu = Math.max(
+      0.34,
+      Math.min(0.82, 0.78 - slopeDeg * 0.012 - sandTrapScore * 0.18)
+    );
+
+    return {
+      elevM,
+      slopeDeg,
+      pitchDeg,
+      rollDeg,
+      dzEast,
+      dzNorth,
+      frictionMu,
+    };
+  }
+}
+
+// ============================================================================
+// SHARED IN-MEMORY TILE CACHE & PRIORITY SCHEDULER
 // ============================================================================
 const imageCache = new Map<string, Promise<HTMLImageElement | null>>();
-const demS16Cache = new Map<string, Promise<Int16Array | null>>();
 
 function fetchCachedImage(url: string): Promise<HTMLImageElement | null> {
   let existing = imageCache.get(url);
@@ -260,37 +833,6 @@ function fetchCachedImage(url: string): Promise<HTMLImageElement | null> {
     if (firstKey) imageCache.delete(firstKey);
   }
   imageCache.set(url, existing);
-  return existing;
-}
-
-function fetchCachedS16Dem(
-  z: number,
-  row: number,
-  col: number,
-  lonMin: number,
-  latMin: number,
-  lonMax: number,
-  latMax: number
-): Promise<Int16Array | null> {
-  const key = `${z}/${row}/${col}`;
-  let existing = demS16Cache.get(key);
-  if (existing) return existing;
-
-  const url = `https://trek.nasa.gov/mars/trekarcgis/rest/services/Mars_MOLA_blend200ppx_HRSC_DEM_clon0dd_200mpp_lzw/ImageServer/exportImage?bbox=${lonMin},${latMin},${lonMax},${latMax}&bboxSR=104905&size=128,128&imageSR=104905&format=tiff&pixelType=S16&f=image`;
-  existing = fetch(url)
-    .then((res) => (res.ok ? res.arrayBuffer() : null))
-    .then((buf) => {
-      if (!buf || buf.byteLength < 32768) return null;
-      const slice = buf.slice(buf.byteLength - 32768);
-      return new Int16Array(slice);
-    })
-    .catch(() => null);
-
-  if (demS16Cache.size > 250) {
-    const firstKey = demS16Cache.keys().next().value;
-    if (firstKey) demS16Cache.delete(firstKey);
-  }
-  demS16Cache.set(key, existing);
   return existing;
 }
 
@@ -350,7 +892,7 @@ class TileDownloadScheduler {
 }
 
 // ============================================================================
-// QUADTREE SPHERICAL TILE NODE (TIERED QUALITY + SEAMLESS NORMALS + SKIRTS)
+// QUADTREE SPHERICAL TILE NODE (100% SEAMLESS ACROSS ALL BORDERS)
 // ============================================================================
 class QuadTileNode {
   readonly z: number;
@@ -367,34 +909,40 @@ class QuadTileNode {
   readonly latCenter: number;
   readonly spanDeg: number;
 
-  // Quality tier: High-Detail if intersecting one of the 4 Expedition Sites, Standard otherwise
   readonly expeditionSite: ExpeditionSite | null;
   readonly isHighDetailSite: boolean;
   readonly maxAllowedZoom: number;
-  readonly texSize: number; // 256px for Expedition Hubs, 128px for rest of Mars
+  readonly texSize: number;
 
   readonly center3D: THREE.Vector3;
   readonly boundingSphere: THREE.Sphere;
 
   children: QuadTileNode[] | null = null;
   mesh: THREE.Mesh | null = null;
-  borderLine: THREE.Line | null;
+  borderLine: THREE.Line | null = null;
 
   colorCanvas: HTMLCanvasElement;
+  baseImageryCanvas: HTMLCanvasElement; // Cached orbital imagery so Slope Radar updates instantly
   demGrid: Float32Array;
+  slopeGrid: Float32Array;
 
   isLoaded = false;
   isLoading = false;
   isDisposed = false;
   cancelDownload: (() => void) | null = null;
 
-  constructor(z: number, row: number, col: number, parent: QuadTileNode | null) {
+  constructor(
+    z: number,
+    row: number,
+    col: number,
+    parent: QuadTileNode | null,
+    terrainField: UnifiedMarsTerrainField
+  ) {
     this.z = z;
     this.row = row;
     this.col = col;
     this.key = `${z}/${row}/${col}`;
     this.parent = parent;
-    this.borderLine = null;
 
     const cols = 2 * (1 << z);
     const rows = 1 * (1 << z);
@@ -408,16 +956,18 @@ class QuadTileNode {
     this.lonCenter = (this.lonMin + this.lonMax) * 0.5;
     this.latCenter = (this.latMin + this.latMax) * 0.5;
 
-    // Determine if this tile covers one of the 4 High-Detail Expedition Sites
     this.expeditionSite = findIntersectingExpeditionSite(
       this.lonMin,
       this.latMin,
       this.lonMax,
       this.latMax
     );
+    if (this.expeditionSite) {
+      terrainField.ensureSiteMasterDemLoaded(this.expeditionSite);
+    }
+
     this.isHighDetailSite = this.expeditionSite !== null;
     this.maxAllowedZoom = this.expeditionSite ? this.expeditionSite.maxZoom : MAX_GLOBAL_ZOOM;
-    // Non-hub global tiles use 128x128 lightweight textures; Expedition Hub tiles use full 256x256
     this.texSize = this.isHighDetailSite ? 256 : 128;
 
     this.center3D = latLonToVector3(this.latCenter, this.lonCenter, GLOBE_RADIUS);
@@ -428,75 +978,181 @@ class QuadTileNode {
     this.colorCanvas.width = this.texSize;
     this.colorCanvas.height = this.texSize;
 
-    this.demGrid = new Float32Array(DEM_GRID_SIZE * DEM_GRID_SIZE);
+    this.baseImageryCanvas = document.createElement('canvas');
+    this.baseImageryCanvas.width = this.texSize;
+    this.baseImageryCanvas.height = this.texSize;
+
+    const gridLen = DEM_GRID_SIZE * DEM_GRID_SIZE;
+    this.demGrid = new Float32Array(gridLen);
+    this.slopeGrid = new Float32Array(gridLen);
 
     if (parent) {
-      this.inheritFromParent(parent);
+      const qCol = this.col % 2;
+      const qRow = this.row % 2;
+      const pHalf = parent.texSize / 2;
+      const bCtx = this.baseImageryCanvas.getContext('2d')!;
+      bCtx.imageSmoothingEnabled = true;
+      bCtx.drawImage(
+        parent.baseImageryCanvas,
+        qCol * pHalf,
+        qRow * pHalf,
+        pHalf,
+        pHalf,
+        0,
+        0,
+        this.texSize,
+        this.texSize
+      );
+      const cCtx = this.colorCanvas.getContext('2d')!;
+      cCtx.drawImage(this.baseImageryCanvas, 0, 0);
     } else {
-      const ctx = this.colorCanvas.getContext('2d')!;
-      ctx.fillStyle = '#a45a38';
-      ctx.fillRect(0, 0, this.texSize, this.texSize);
-      this.demGrid.fill(-1500);
+      const bCtx = this.baseImageryCanvas.getContext('2d')!;
+      bCtx.fillStyle = '#a45a38';
+      bCtx.fillRect(0, 0, this.texSize, this.texSize);
+      const cCtx = this.colorCanvas.getContext('2d')!;
+      cCtx.drawImage(this.baseImageryCanvas, 0, 0);
     }
+
+    this.refreshUnifiedDemAndSlope(terrainField);
   }
 
-  inheritFromParent(parent: QuadTileNode) {
-    const qCol = this.col % 2;
-    const qRow = this.row % 2;
-
-    const pHalf = parent.texSize / 2;
-    const ctx = this.colorCanvas.getContext('2d')!;
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(
-      parent.colorCanvas,
-      qCol * pHalf,
-      qRow * pHalf,
-      pHalf,
-      pHalf,
-      0,
-      0,
-      this.texSize,
-      this.texSize
-    );
-
-    const pGrid = parent.demGrid;
-    const halfSeg = TILE_SEGMENTS / 2;
-    const startX = qCol * halfSeg;
-    const startY = qRow * halfSeg;
-
+  /**
+   * Populates demGrid and slopeGrid from the single UnifiedMarsTerrainField.
+   * Because every vertex at (lat, lon) queries the exact same C1-continuous function,
+   * adjacent tiles share 100% identical border vertices AND identical border slopes!
+   */
+  refreshUnifiedDemAndSlope(terrainField: UnifiedMarsTerrainField) {
     for (let r = 0; r < DEM_GRID_SIZE; r++) {
-      const py = startY + (r / TILE_SEGMENTS) * halfSeg;
-      const y0 = Math.min(Math.floor(py), TILE_SEGMENTS - 1);
-      const y1 = y0 + 1;
-      const fy = py - y0;
+      const vFrac = r / TILE_SEGMENTS;
+      const lat = this.latMax - vFrac * (this.latMax - this.latMin);
 
       for (let c = 0; c < DEM_GRID_SIZE; c++) {
-        const px = startX + (c / TILE_SEGMENTS) * halfSeg;
-        const x0 = Math.min(Math.floor(px), TILE_SEGMENTS - 1);
-        const x1 = x0 + 1;
-        const fx = px - x0;
+        const uFrac = c / TILE_SEGMENTS;
+        const lon = this.lonMin + uFrac * (this.lonMax - this.lonMin);
 
-        const v00 = pGrid[y0 * DEM_GRID_SIZE + x0];
-        const v10 = pGrid[y0 * DEM_GRID_SIZE + x1];
-        const v01 = pGrid[y1 * DEM_GRID_SIZE + x0];
-        const v11 = pGrid[y1 * DEM_GRID_SIZE + x1];
-
-        const top = v00 * (1 - fx) + v10 * fx;
-        const bot = v01 * (1 - fx) + v11 * fx;
-        this.demGrid[r * DEM_GRID_SIZE + c] = top * (1 - fy) + bot * fy;
+        const idx = r * DEM_GRID_SIZE + c;
+        const metrics = terrainField.sampleMetricsAt(lat, lon, 0);
+        this.demGrid[idx] = metrics.elevM;
+        this.slopeGrid[idx] = metrics.slopeDeg;
       }
     }
   }
 
   /**
-   * Builds 3D spherical patch mesh with analytical surface normals so skirt geometry
-   * NEVER corrupts border vertex normals (eliminating dark/black borders between tiles).
+   * Composites the active visual layer (Realistic, Dynamic Slope Radar, Contours)
+   * using the C1-continuous demGrid & slopeGrid so NO tile border lines ever appear!
    */
+  applyVisualLayerToCanvas(layerMode: VisualLayerMode) {
+    const texSize = this.texSize;
+    const ctx = this.colorCanvas.getContext('2d')!;
+    ctx.drawImage(this.baseImageryCanvas, 0, 0);
+
+    if (layerMode === 'realistic' || layerMode === 'color_hillshade' || layerMode === 'orbital_raw') {
+      if (this.mesh) {
+        const mat = this.mesh.material as THREE.MeshStandardMaterial;
+        if (mat.map) mat.map.needsUpdate = true;
+      }
+      return;
+    }
+
+    const imgData = ctx.getImageData(0, 0, texSize, texSize);
+    const pixels = imgData.data;
+    const contourIntervalM = 60.0; // Constant across all zoom levels so contours never break at LOD borders!
+
+    for (let py = 0; py < texSize; py++) {
+      const gy = (py / (texSize - 1)) * TILE_SEGMENTS;
+      const r0 = Math.min(Math.floor(gy), TILE_SEGMENTS - 1);
+      const fy = gy - r0;
+
+      for (let px = 0; px < texSize; px++) {
+        const p = (py * texSize + px) * 4;
+        let outR = pixels[p];
+        let outG = pixels[p + 1];
+        let outB = pixels[p + 2];
+        const lum = (outR * 0.299 + outG * 0.587 + outB * 0.114) / 255.0;
+
+        const gx = (px / (texSize - 1)) * TILE_SEGMENTS;
+        const c0 = Math.min(Math.floor(gx), TILE_SEGMENTS - 1);
+        const fx = gx - c0;
+
+        const idx00 = r0 * DEM_GRID_SIZE + c0;
+        const idx10 = r0 * DEM_GRID_SIZE + (c0 + 1);
+        const idx01 = (r0 + 1) * DEM_GRID_SIZE + c0;
+        const idx11 = (r0 + 1) * DEM_GRID_SIZE + (c0 + 1);
+
+        const elevPx =
+          (this.demGrid[idx00] * (1 - fx) + this.demGrid[idx10] * fx) * (1 - fy) +
+          (this.demGrid[idx01] * (1 - fx) + this.demGrid[idx11] * fx) * fy;
+
+        const slopePx =
+          (this.slopeGrid[idx00] * (1 - fx) + this.slopeGrid[idx10] * fx) * (1 - fy) +
+          (this.slopeGrid[idx01] * (1 - fx) + this.slopeGrid[idx11] * fx) * fy;
+
+        if (layerMode === 'slope_radar') {
+          let radarR = 34;
+          let radarG = 197;
+          let radarB = 94;
+
+          if (slopePx < 8.0) {
+            const t = slopePx / 8.0;
+            radarR = 25 + t * 85;
+            radarG = 185 + t * 25;
+            radarB = 85 - t * 25;
+          } else if (slopePx <= 15.0) {
+            const t = (slopePx - 8.0) / 7.0;
+            radarR = 215 + t * 30;
+            radarG = 180 - t * 75;
+            radarB = 38 - t * 15;
+          } else {
+            const t = Math.min(1.0, (slopePx - 15.0) / 14.0);
+            radarR = 235 + t * 20;
+            radarG = 48 - t * 32;
+            radarB = 38 - t * 20;
+          }
+
+          const reliefShade = Math.max(0.32, Math.min(1.22, 0.38 + lum * 0.9));
+          outR = outR * 0.22 + radarR * reliefShade * 0.78;
+          outG = outG * 0.22 + radarG * reliefShade * 0.78;
+          outB = outB * 0.22 + radarB * reliefShade * 0.78;
+        }
+
+        if (layerMode === 'slope_radar' || layerMode === 'tactical_contour') {
+          const modElev = ((elevPx % contourIntervalM) + contourIntervalM) % contourIntervalM;
+          const distToIso = Math.min(modElev, contourIntervalM - modElev);
+          const lineTol = Math.max(1.1, slopePx * 0.15);
+          if (distToIso < lineTol) {
+            const lineStrength = (1.0 - distToIso / lineTol) * 0.5;
+            if (slopePx > 14.5) {
+              outR = outR * (1 - lineStrength) + 255 * lineStrength;
+              outG = outG * (1 - lineStrength) + 175 * lineStrength;
+              outB = outB * (1 - lineStrength) + 70 * lineStrength;
+            } else {
+              outR = outR * (1 - lineStrength) + 235 * lineStrength;
+              outG = outG * (1 - lineStrength) + 245 * lineStrength;
+              outB = outB * (1 - lineStrength) + 255 * lineStrength;
+            }
+          }
+        }
+
+        pixels[p] = Math.min(255, Math.max(0, Math.round(outR)));
+        pixels[p + 1] = Math.min(255, Math.max(0, Math.round(outG)));
+        pixels[p + 2] = Math.min(255, Math.max(0, Math.round(outB)));
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    if (this.mesh) {
+      const mat = this.mesh.material as THREE.MeshStandardMaterial;
+      if (mat.map) mat.map.needsUpdate = true;
+    }
+  }
+
   buildOrUpdateMesh(
     exaggeration: number,
     wireframe: boolean,
     showBorders: boolean,
-    parentGroup: THREE.Group
+    parentGroup: THREE.Group,
+    terrainField: UnifiedMarsTerrainField
   ) {
     const mainVertCount = DEM_GRID_SIZE * DEM_GRID_SIZE;
     const skirtVertCount = DEM_GRID_SIZE * 4;
@@ -566,7 +1222,6 @@ class QuadTileNode {
         }
       };
 
-      // Top, bottom, left, right skirts
       addSkirtIndices((i) => i, mainVertCount, false);
       addSkirtIndices((i) => TILE_SEGMENTS * DEM_GRID_SIZE + i, mainVertCount + DEM_GRID_SIZE, true);
       addSkirtIndices((i) => i * DEM_GRID_SIZE, mainVertCount + DEM_GRID_SIZE * 2, true);
@@ -611,11 +1266,20 @@ class QuadTileNode {
       }
     }
 
-    // Clamp UV coordinates to exact texel centers to eliminate JPEG edge seams
     const uvMin = 0.5 / this.texSize;
     const uvSpan = (this.texSize - 1.0) / this.texSize;
 
-    // 1. Compute 3D surface positions & UVs
+    // Compute 3D surface positions AND globally continuous analytical surface normals
+    // directly from UnifiedMarsTerrainField so adjacent tiles share 100% identical border normals!
+    const dStepDeg = 0.004;
+    const vW = new THREE.Vector3();
+    const vE = new THREE.Vector3();
+    const vN = new THREE.Vector3();
+    const vS = new THREE.Vector3();
+    const dX = new THREE.Vector3();
+    const dY = new THREE.Vector3();
+    const nVec = new THREE.Vector3();
+
     for (let r = 0; r < DEM_GRID_SIZE; r++) {
       const vFrac = r / TILE_SEGMENTS;
       const lat = this.latMax - vFrac * (this.latMax - this.latMin);
@@ -635,62 +1299,42 @@ class QuadTileNode {
 
         uvs[idx * 2] = uvMin + uFrac * uvSpan;
         uvs[idx * 2 + 1] = uvMin + (1.0 - vFrac) * uvSpan;
+
+        // Global coordinate-based normal (identical across tile borders!)
+        const rW = elevationMetersToRadius(
+          terrainField.getElevationMeters(lat, lon - dStepDeg),
+          exaggeration
+        );
+        const rE = elevationMetersToRadius(
+          terrainField.getElevationMeters(lat, lon + dStepDeg),
+          exaggeration
+        );
+        const rN = elevationMetersToRadius(
+          terrainField.getElevationMeters(Math.min(89.9, lat + dStepDeg), lon),
+          exaggeration
+        );
+        const rS = elevationMetersToRadius(
+          terrainField.getElevationMeters(Math.max(-89.9, lat - dStepDeg), lon),
+          exaggeration
+        );
+
+        vW.copy(latLonToVector3(lat, lon - dStepDeg, rW));
+        vE.copy(latLonToVector3(lat, lon + dStepDeg, rE));
+        vN.copy(latLonToVector3(Math.min(89.9, lat + dStepDeg), lon, rN));
+        vS.copy(latLonToVector3(Math.max(-89.9, lat - dStepDeg), lon, rS));
+
+        dX.subVectors(vE, vW);
+        dY.subVectors(vS, vN);
+        nVec.crossVectors(dY, dX).normalize();
+
+        normals[idx * 3] = nVec.x;
+        normals[idx * 3 + 1] = nVec.y;
+        normals[idx * 3 + 2] = nVec.z;
       }
     }
 
-    // 2. Compute seamless analytical surface normals on the 49x49 grid
-    const vLeft = new THREE.Vector3();
-    const vRight = new THREE.Vector3();
-    const vUp = new THREE.Vector3();
-    const vDown = new THREE.Vector3();
-    const dX = new THREE.Vector3();
-    const dY = new THREE.Vector3();
-    const slopeNormal = new THREE.Vector3();
-    const radialNormal = new THREE.Vector3();
-
-    for (let r = 0; r < DEM_GRID_SIZE; r++) {
-      const rU = Math.max(0, r - 1);
-      const rD = Math.min(TILE_SEGMENTS, r + 1);
-      const borderDistR = Math.min(r, TILE_SEGMENTS - r);
-
-      for (let c = 0; c < DEM_GRID_SIZE; c++) {
-        const cL = Math.max(0, c - 1);
-        const cR = Math.min(TILE_SEGMENTS, c + 1);
-        const borderDistC = Math.min(c, TILE_SEGMENTS - c);
-        const borderFactor = Math.min(1.0, Math.min(borderDistR, borderDistC) / 2.0);
-
-        const idx = r * DEM_GRID_SIZE + c;
-        radialNormal.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]).normalize();
-
-        if (borderFactor <= 0.01) {
-          normals[idx * 3] = radialNormal.x;
-          normals[idx * 3 + 1] = radialNormal.y;
-          normals[idx * 3 + 2] = radialNormal.z;
-        } else {
-          const idxL = r * DEM_GRID_SIZE + cL;
-          const idxR = r * DEM_GRID_SIZE + cR;
-          const idxU = rU * DEM_GRID_SIZE + c;
-          const idxD = rD * DEM_GRID_SIZE + c;
-
-          vLeft.set(positions[idxL * 3], positions[idxL * 3 + 1], positions[idxL * 3 + 2]);
-          vRight.set(positions[idxR * 3], positions[idxR * 3 + 1], positions[idxR * 3 + 2]);
-          vUp.set(positions[idxU * 3], positions[idxU * 3 + 1], positions[idxU * 3 + 2]);
-          vDown.set(positions[idxD * 3], positions[idxD * 3 + 1], positions[idxD * 3 + 2]);
-
-          dX.subVectors(vRight, vLeft);
-          dY.subVectors(vDown, vUp);
-          slopeNormal.crossVectors(dY, dX).normalize();
-
-          slopeNormal.lerp(radialNormal, 1.0 - borderFactor * 0.85).normalize();
-          normals[idx * 3] = slopeNormal.x;
-          normals[idx * 3 + 1] = slopeNormal.y;
-          normals[idx * 3 + 2] = slopeNormal.z;
-        }
-      }
-    }
-
-    // 3. Populate Skirt vertices & copy surface border normals
-    const skirtDrop = Math.max(0.05, this.boundingSphere.radius * 0.08);
+    // Skirts hide any LOD T-junctions between coarse z=5 and fine z=6..12 tiles
+    const skirtDrop = Math.max(0.08, this.boundingSphere.radius * 0.12);
     const copyToSkirt = (mainIdx: number, skirtIdx: number) => {
       const mx = positions[mainIdx * 3];
       const my = positions[mainIdx * 3 + 1];
@@ -734,64 +1378,6 @@ class QuadTileNode {
       )
     );
     this.boundingSphere.center.copy(this.center3D);
-
-    // Optional Quadtree Debug Border (Cyan for High-Detail Expedition Hub tiles, Amber for Global tiles)
-    if (showBorders) {
-      if (!this.borderLine) {
-        const borderPts: THREE.Vector3[] = [];
-        for (let i = 0; i < DEM_GRID_SIZE; i++) {
-          const idx = i;
-          borderPts.push(
-            new THREE.Vector3(
-              positions[idx * 3],
-              positions[idx * 3 + 1],
-              positions[idx * 3 + 2]
-            ).multiplyScalar(1.001)
-          );
-        }
-        for (let i = 1; i < DEM_GRID_SIZE; i++) {
-          const idx = i * DEM_GRID_SIZE + TILE_SEGMENTS;
-          borderPts.push(
-            new THREE.Vector3(
-              positions[idx * 3],
-              positions[idx * 3 + 1],
-              positions[idx * 3 + 2]
-            ).multiplyScalar(1.001)
-          );
-        }
-        for (let i = TILE_SEGMENTS - 1; i >= 0; i--) {
-          const idx = TILE_SEGMENTS * DEM_GRID_SIZE + i;
-          borderPts.push(
-            new THREE.Vector3(
-              positions[idx * 3],
-              positions[idx * 3 + 1],
-              positions[idx * 3 + 2]
-            ).multiplyScalar(1.001)
-          );
-        }
-        for (let i = TILE_SEGMENTS - 1; i >= 0; i--) {
-          const idx = i * DEM_GRID_SIZE;
-          borderPts.push(
-            new THREE.Vector3(
-              positions[idx * 3],
-              positions[idx * 3 + 1],
-              positions[idx * 3 + 2]
-            ).multiplyScalar(1.001)
-          );
-        }
-        const bGeom = new THREE.BufferGeometry().setFromPoints(borderPts);
-        const bMat = new THREE.LineBasicMaterial({
-          color: this.isHighDetailSite && this.z >= 6 ? 0x00f0ff : 0xf59e0b,
-          transparent: true,
-          opacity: 0.75,
-        });
-        this.borderLine = new THREE.Line(bGeom, bMat);
-        parentGroup.add(this.borderLine);
-      }
-      this.borderLine.visible = this.mesh.visible;
-    } else if (this.borderLine) {
-      this.borderLine.visible = false;
-    }
   }
 
   setVisible(vis: boolean, showBorders: boolean) {
@@ -838,15 +1424,15 @@ class QuadTileNode {
 }
 
 // ============================================================================
-// SELECTIVE QUALITY TILE FETCHER & SEAMLESS COMPOSITOR
+// TILE IMAGERY FETCHER & COMPOSITOR
 // ============================================================================
-async function loadTileDataFromTrek(
+async function loadTileImageryFromTrek(
   node: QuadTileNode,
-  layerMode: VisualLayerMode
+  layerMode: VisualLayerMode,
+  terrainField: UnifiedMarsTerrainField
 ): Promise<void> {
   const { z, row, col, lonMin, latMin, lonMax, latMax, texSize, expeditionSite } = node;
 
-  // 1. Base Color (Viking Global Color z <= 7, or exact sub-quadrant of z=7 ancestor for z >= 8)
   const colorZ = Math.min(z, 7);
   const colorShift = z - colorZ;
   const colorRow = row >> colorShift;
@@ -856,7 +1442,6 @@ async function loadTileDataFromTrek(
     `https://trek.nasa.gov/tiles/Mars/EQ/Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/${colorZ}/${colorRow}/${colorCol}.jpg`
   );
 
-  // 2. Global MOLA + HRSC 200m Shaded Relief (z <= 8, or exact sub-quadrant of z=8 ancestor)
   const shadeZ = Math.min(z, 8);
   const shadeShift = z - shadeZ;
   const shadeRow = row >> shadeShift;
@@ -866,7 +1451,6 @@ async function loadTileDataFromTrek(
     `https://trek.nasa.gov/tiles/Mars/EQ/Mars_MOLA_blend200ppx_HRSC_Shade_clon0dd_200mpp_lzw/1.0.0/default/default028mm/${shadeZ}/${shadeRow}/${shadeCol}.jpg`
   );
 
-  // 3. Optional Color Hillshade (z <= 8)
   const clrShadePromise =
     layerMode === 'color_hillshade'
       ? fetchCachedImage(
@@ -874,8 +1458,6 @@ async function loadTileDataFromTrek(
         )
       : Promise.resolve(null);
 
-  // 4. HIGH-DETAIL EXPEDITION SITE ORTHOMOSAICS (6m CTX & 25cm HiRISE)
-  // ONLY fetched when this tile belongs to one of the 4 Expedition Sites at z >= 6!
   let ctxPromise: Promise<HTMLImageElement | null> = Promise.resolve(null);
   let hirisePromise: Promise<HTMLImageElement | null> = Promise.resolve(null);
 
@@ -897,51 +1479,17 @@ async function loadTileDataFromTrek(
     }
   }
 
-  // 5. ELEVATION DEM:
-  // - Standard Global Tiles (z <= 5): lightweight WMTS 8-bit MOLA Global DEM PNG
-  // - High-Detail Expedition Site Tiles (z >= 6): 16-bit Signed Integer DEM from MOLA+HRSC ImageServer
-  const wmtsDemPromise =
-    z <= 5
-      ? fetchCachedImage(
-          `https://trek.nasa.gov/tiles/Mars/EQ/mola128_mola64_merge_90Nto90S_SimpleC_clon0/1.0.0/default/default028mm/${z}/${row}/${col}.png`
-        )
-      : Promise.resolve(null);
-
-  let s16DemPromise: Promise<Int16Array | null> = Promise.resolve(null);
-  const demZ = Math.min(z, 10);
-  const demShift = z - demZ;
-  const demRow = row >> demShift;
-  const demCol = col >> demShift;
-
-  if (expeditionSite && z >= 6) {
-    const demCols = 2 * (1 << demZ);
-    const demRows = 1 * (1 << demZ);
-    const dSpan = 360.0 / demCols;
-    const dLonMin = -180.0 + demCol * dSpan;
-    const dLonMax = dLonMin + dSpan;
-    const dLatMax = 90.0 - demRow * (180.0 / demRows);
-    const dLatMin = dLatMax - 180.0 / demRows;
-
-    s16DemPromise = fetchCachedS16Dem(demZ, demRow, demCol, dLonMin, dLatMin, dLonMax, dLatMax);
-  }
-
-  const [vikingImg, hrscShadeImg, clrShadeImg, ctxImg, hiriseImg, wmtsDemImg, s16DemArr] =
-    await Promise.all([
-      vikingPromise,
-      hrscShadePromise,
-      clrShadePromise,
-      ctxPromise,
-      hirisePromise,
-      wmtsDemPromise,
-      s16DemPromise,
-    ]);
+  const [vikingImg, hrscShadeImg, clrShadeImg, ctxImg, hiriseImg] = await Promise.all([
+    vikingPromise,
+    hrscShadePromise,
+    clrShadePromise,
+    ctxPromise,
+    hirisePromise,
+  ]);
 
   if (node.isDisposed) return;
 
-  // ==========================================================================
-  // COMPOSITE SEAMLESS TILE TEXTURE (256x256 FOR SITES, 128x128 FOR REST)
-  // ==========================================================================
-  const ctx = node.colorCanvas.getContext('2d')!;
+  const bCtx = node.baseImageryCanvas.getContext('2d')!;
   const scratch = document.createElement('canvas');
   scratch.width = texSize;
   scratch.height = texSize;
@@ -976,12 +1524,12 @@ async function loadTileDataFromTrek(
   };
 
   if (layerMode === 'color_hillshade' && clrShadeImg) {
-    drawSubQuadrant(ctx, clrShadeImg, shadeShift);
+    drawSubQuadrant(bCtx, clrShadeImg, shadeShift);
   } else if (vikingImg) {
-    drawSubQuadrant(ctx, vikingImg, colorShift);
+    drawSubQuadrant(bCtx, vikingImg, colorShift);
   }
 
-  const baseImgData = ctx.getImageData(0, 0, texSize, texSize);
+  const baseImgData = bCtx.getImageData(0, 0, texSize, texSize);
   const basePixels = baseImgData.data;
 
   let shadePixels: Uint8ClampedArray | null = null;
@@ -1003,8 +1551,6 @@ async function loadTileDataFromTrek(
   }
 
   const totalPx = texSize * texSize;
-  const microDetail = new Float32Array(totalPx);
-
   for (let i = 0; i < totalPx; i++) {
     const p = i * 4;
     const r = basePixels[p];
@@ -1014,7 +1560,6 @@ async function loadTileDataFromTrek(
     const hrscLum = shadePixels ? shadePixels[p] / 255.0 : 0.62;
     let detailLum = hrscLum;
 
-    // Smoothly feather 6m CTX swath edges across all 4 Expedition Hubs (zero black borders!)
     if (ctxPixels) {
       const cVal = ctxPixels[p];
       const cAlpha = ctxPixels[p + 3];
@@ -1026,7 +1571,6 @@ async function loadTileDataFromTrek(
       }
     }
 
-    // Smoothly feather 25cm HiRISE swath on top of CTX (Jezero Delta Front)
     if (hirisePixels) {
       const hVal = hirisePixels[p];
       const hAlpha = hirisePixels[p + 3];
@@ -1037,8 +1581,6 @@ async function loadTileDataFromTrek(
         detailLum = detailLum * (1.0 - w) + (hVal / 255.0) * w;
       }
     }
-
-    microDetail[i] = detailLum;
 
     if (layerMode === 'orbital_raw') {
       const v = Math.min(255, Math.max(0, Math.round(detailLum * 255)));
@@ -1056,130 +1598,776 @@ async function loadTileDataFromTrek(
       continue;
     }
 
-    // REALISTIC MARS COMPOSITE
     const warmR = r * 0.65 + 198 * 0.35;
     const warmG = g * 0.58 + 114 * 0.42;
     const warmB = b * 0.52 + 74 * 0.48;
-
     const stretched = Math.max(0.22, Math.min(1.22, 0.32 + (detailLum - 0.15) * 1.12));
+
     basePixels[p] = Math.min(255, Math.round(warmR * stretched));
     basePixels[p + 1] = Math.min(255, Math.round(warmG * stretched));
     basePixels[p + 2] = Math.min(255, Math.round(warmB * stretched));
   }
 
-  ctx.putImageData(baseImgData, 0, 0);
-
-  // ==========================================================================
-  // POPULATE 49x49 ELEVATION GRID IN METERS
-  // ==========================================================================
-  if (s16DemArr) {
-    const scale = 1 << demShift;
-    const qCol = col % scale;
-    const qRow = row % scale;
-    const subSpan = 127.0 / scale;
-    const startX = qCol * subSpan;
-    const startY = qRow * subSpan;
-
-    for (let r = 0; r < DEM_GRID_SIZE; r++) {
-      const fy = startY + (r / TILE_SEGMENTS) * subSpan;
-      const y0 = Math.min(Math.floor(fy), 126);
-      const y1 = y0 + 1;
-      const wy = fy - y0;
-
-      for (let c = 0; c < DEM_GRID_SIZE; c++) {
-        const fx = startX + (c / TILE_SEGMENTS) * subSpan;
-        const x0 = Math.min(Math.floor(fx), 126);
-        const x1 = x0 + 1;
-        const wx = fx - x0;
-
-        const e00 = s16DemArr[y0 * 128 + x0];
-        const e10 = s16DemArr[y0 * 128 + x1];
-        const e01 = s16DemArr[y1 * 128 + x0];
-        const e11 = s16DemArr[y1 * 128 + x1];
-
-        let elev = (e00 * (1 - wx) + e10 * wx) * (1 - wy) + (e01 * (1 - wx) + e11 * wx) * wy;
-
-        // Subtle CTX/HiRISE micro-topography inside Expedition Hub tiles (faded smoothly before tile border)
-        if (z >= 8 && r > 1 && r < TILE_SEGMENTS - 1 && c > 1 && c < TILE_SEGMENTS - 1) {
-          const px = Math.min(texSize - 1, Math.round((c / TILE_SEGMENTS) * (texSize - 1)));
-          const py = Math.min(texSize - 1, Math.round((r / TILE_SEGMENTS) * (texSize - 1)));
-          const dVal = microDetail[py * texSize + px];
-          elev += (dVal - 0.5) * (z === 8 ? 28.0 : z === 9 ? 18.0 : 10.0);
-        }
-
-        node.demGrid[r * DEM_GRID_SIZE + c] = elev;
-      }
-    }
-  } else if (wmtsDemImg) {
-    sCtx.clearRect(0, 0, texSize, texSize);
-    sCtx.drawImage(wmtsDemImg, 0, 0, DEM_GRID_SIZE, DEM_GRID_SIZE);
-    const demData = sCtx.getImageData(0, 0, DEM_GRID_SIZE, DEM_GRID_SIZE).data;
-
-    for (let i = 0; i < DEM_GRID_SIZE * DEM_GRID_SIZE; i++) {
-      const u8 = demData[i * 4];
-      node.demGrid[i] = u8 * 55.08 - 7004.45;
-    }
-  }
-
+  bCtx.putImageData(baseImgData, 0, 0);
+  node.refreshUnifiedDemAndSlope(terrainField);
+  node.applyVisualLayerToCanvas(layerMode);
   node.isLoaded = true;
 }
 
 // ============================================================================
-// MAIN REACT COMPONENT
+// STRICT ROUND-TRIP (OUTBOUND A->B + RETURN B->A) A* ROUTE PLANNER
+// ============================================================================
+/**
+ * Computes BOTH:
+ *  1) Outbound Path (A1 -> B2)
+ *  2) Safe Return / Walkback Path (B2 -> A1)
+ * Enforces STRICT Hard Constraints (Infinity cost = impassable wall):
+ *  - Rover Autopilot: |pitch| <= 15.0° AND |roll| <= 11.5° AND totalSlope <= 15.0°
+ *  - Astronaut Hike:  uphill pitch <= +20.0°, downhill pitch >= -14.0°, totalSlope <= 20.0°,
+ *                     and 1-ring cliff setback around slopes > 25.0°.
+ * If either Outbound (A1->B2) OR Return (B2->A1) cannot be traversed safely without
+ * violating these hard constraints, returns `isTraversable = false` with an explicit reason!
+ */
+function computeRoundTripSafeRoute(
+  startLat: number,
+  startLon: number,
+  endLat: number,
+  endLon: number,
+  mode: TraverseMode,
+  terrainField: UnifiedMarsTerrainField
+): ComputedRoundTripRoute {
+  const GRID_N = 52; // 52x52 lattice
+  const dLatSpan = Math.abs(endLat - startLat);
+  const dLonSpan = Math.abs(normalizeLon(endLon - startLon));
+  const padDeg = Math.max(0.04, Math.max(dLatSpan, dLonSpan) * 0.45);
+
+  const minLat = Math.min(startLat, endLat) - padDeg;
+  const maxLat = Math.max(startLat, endLat) + padDeg;
+  const minLon = Math.min(startLon, endLon) - padDeg;
+  const maxLon = Math.max(startLon, endLon) + padDeg;
+
+  const latAt = (r: number) => minLat + (r / (GRID_N - 1)) * (maxLat - minLat);
+  const lonAt = (c: number) => minLon + (c / (GRID_N - 1)) * (maxLon - minLon);
+
+  const totalCells = GRID_N * GRID_N;
+  const elevArr = new Float32Array(totalCells);
+  const slopeArr = new Float32Array(totalCells);
+  const fricArr = new Float32Array(totalCells);
+  const cliffNearArr = new Uint8Array(totalCells);
+
+  for (let r = 0; r < GRID_N; r++) {
+    const lat = latAt(r);
+    for (let c = 0; c < GRID_N; c++) {
+      const lon = lonAt(c);
+      const { elevM, slopeDeg, frictionMu } = terrainField.sampleMetricsAt(lat, lon, 0);
+      const idx = r * GRID_N + c;
+      elevArr[idx] = elevM;
+      slopeArr[idx] = slopeDeg;
+      fricArr[idx] = frictionMu;
+    }
+  }
+
+  // 1-ring cliff drop-off setback buffer (slopes > 25°)
+  for (let r = 1; r < GRID_N - 1; r++) {
+    for (let c = 1; c < GRID_N - 1; c++) {
+      const idx = r * GRID_N + c;
+      let maxNeigh = slopeArr[idx];
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const ns = slopeArr[(r + dr) * GRID_N + (c + dc)];
+          if (ns > maxNeigh) maxNeigh = ns;
+        }
+      }
+      if (maxNeigh > 25.0) cliffNearArr[idx] = 1;
+    }
+  }
+
+  const toGridRC = (lat: number, lon: number) => {
+    const r = Math.max(
+      0,
+      Math.min(GRID_N - 1, Math.round(((lat - minLat) / (maxLat - minLat)) * (GRID_N - 1)))
+    );
+    const c = Math.max(
+      0,
+      Math.min(GRID_N - 1, Math.round(((lon - minLon) / (maxLon - minLon)) * (GRID_N - 1)))
+    );
+    return { r, c, idx: r * GRID_N + c };
+  };
+
+  const nodeA = toGridRC(startLat, startLon);
+  const nodeB = toGridRC(endLat, endLon);
+
+  // Find Top 2 Steepest Hazard Peaks in the area for map hazard callouts
+  const hazardPoints: ComputedRoundTripRoute['hazardPoints'] = [];
+  let maxH1 = { idx: -1, slope: 0 };
+  let maxH2 = { idx: -1, slope: 0 };
+  for (let i = 0; i < totalCells; i++) {
+    const s = slopeArr[i];
+    if (s > maxH1.slope) {
+      maxH2 = maxH1;
+      maxH1 = { idx: i, slope: s };
+    } else if (s > maxH2.slope && Math.abs(i - maxH1.idx) > 8) {
+      maxH2 = { idx: i, slope: s };
+    }
+  }
+  [maxH1, maxH2].forEach((h, idx) => {
+    if (h.idx >= 0 && h.slope >= 12.0) {
+      const r = Math.floor(h.idx / GRID_N);
+      const c = h.idx % GRID_N;
+      const dispSlope = Math.round(h.slope);
+      hazardPoints.push({
+        id: `haz-${idx}`,
+        label:
+          idx === 0
+            ? `SLOPE HAZARD ${dispSlope}°`
+            : `STEEP SCARP ${dispSlope}°`,
+        lat: latAt(r),
+        lon: lonAt(c),
+        elevM: elevArr[h.idx],
+        slopeDeg: dispSlope,
+      });
+    }
+  });
+
+  const maxAllowedCellSlope = mode === 'ROVER_AUTOPILOT' ? 15.0 : 20.0;
+
+  // Immediate endpoint check: if Start (A1) or Destination (B2) sits directly on an impassable cliff
+  if (slopeArr[nodeA.idx] > maxAllowedCellSlope) {
+    return {
+      mode,
+      isTraversable: false,
+      failureReason: `ORIGIN (A1) sits on an impassable ${slopeArr[nodeA.idx].toFixed(
+        1
+      )}° slope (exceeds ${maxAllowedCellSlope}° safety limit). Pick a flatter Start point.`,
+      outboundPoints: [],
+      returnPoints: [],
+      waypoints: [],
+      segments: [],
+      profile: [],
+      outboundDistKm: 0,
+      returnDistKm: 0,
+      totalRoundTripKm: 0,
+      estRoundTripTimeMin: 0,
+      maxSlopeDeg: Math.round(slopeArr[nodeA.idx]),
+      avgFrictionMu: 0,
+      estEnergyWh: 0,
+      hazardPoints,
+    };
+  }
+
+  if (slopeArr[nodeB.idx] > maxAllowedCellSlope) {
+    return {
+      mode,
+      isTraversable: false,
+      failureReason: `DESTINATION (B2) sits on an impassable ${slopeArr[nodeB.idx].toFixed(
+        1
+      )}° slope (exceeds ${maxAllowedCellSlope}° safety limit). Pick a flatter Destination point.`,
+      outboundPoints: [],
+      returnPoints: [],
+      waypoints: [],
+      segments: [],
+      profile: [],
+      outboundDistKm: 0,
+      returnDistKm: 0,
+      totalRoundTripKm: 0,
+      estRoundTripTimeMin: 0,
+      maxSlopeDeg: Math.round(slopeArr[nodeB.idx]),
+      avgFrictionMu: 0,
+      estEnergyWh: 0,
+      hazardPoints,
+    };
+  }
+
+  // Helper to run strict A* for a single leg (used for Outbound A->B and Return B->A)
+  const runStrictLegAStar = (
+    fromIdx: number,
+    toIdx: number,
+    outboundUsedSet: Set<number> | null
+  ): number[] | null => {
+    const gScore = new Float32Array(totalCells).fill(Infinity);
+    const fScore = new Float32Array(totalCells).fill(Infinity);
+    const cameFrom = new Int32Array(totalCells).fill(-1);
+    const closed = new Uint8Array(totalCells);
+
+    const rGoal = Math.floor(toIdx / GRID_N);
+    const cGoal = toIdx % GRID_N;
+    const latGoal = latAt(rGoal);
+    const lonGoal = lonAt(cGoal);
+
+    gScore[fromIdx] = 0;
+    fScore[fromIdx] = 0;
+
+    const openList: number[] = [fromIdx];
+    const dirs = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+      [-1, -1],
+      [-1, 1],
+      [1, -1],
+      [1, 1],
+    ];
+
+    while (openList.length > 0) {
+      let bestPos = 0;
+      let current = openList[0];
+      let bestF = fScore[current];
+      for (let i = 1; i < openList.length; i++) {
+        const cand = openList[i];
+        if (fScore[cand] < bestF) {
+          bestF = fScore[cand];
+          current = cand;
+          bestPos = i;
+        }
+      }
+
+      if (current === toIdx) {
+        const path: number[] = [];
+        let cur = toIdx;
+        while (cur !== -1) {
+          path.push(cur);
+          if (cur === fromIdx) break;
+          cur = cameFrom[cur];
+        }
+        return path.reverse();
+      }
+
+      openList.splice(bestPos, 1);
+      closed[current] = 1;
+
+      const r = Math.floor(current / GRID_N);
+      const c = current % GRID_N;
+      const lat1 = latAt(r);
+      const lon1 = lonAt(c);
+      const z1 = elevArr[current];
+
+      for (const [dr, dc] of dirs) {
+        const nr = r + dr;
+        const nc = c + dc;
+        if (nr < 0 || nr >= GRID_N || nc < 0 || nc >= GRID_N) continue;
+        const nIdx = nr * GRID_N + nc;
+        if (closed[nIdx]) continue;
+
+        const lat2 = latAt(nr);
+        const lon2 = lonAt(nc);
+        const z2 = elevArr[nIdx];
+        const cellSlope = slopeArr[nIdx];
+        const cellFric = fricArr[nIdx];
+
+        const stepKm = Math.max(0.005, surfaceDistanceKm(lat1, lon1, lat2, lon2));
+        const stepMeters = stepKm * 1000.0;
+        const dz = z2 - z1;
+        const signedPitchDeg = Math.atan2(dz, stepMeters) * (180.0 / Math.PI);
+        const effSlopeDeg = Math.max(cellSlope, Math.abs(signedPitchDeg));
+
+        // ====================================================================
+        // STRICT HARD CONSTRAINTS (NO-GO MASK -> CONTINUE / INFINITY)
+        // ====================================================================
+        if (mode === 'ROVER_AUTOPILOT') {
+          // R1: Rover strictly forbidden from any segment > 15.0° slope
+          if (effSlopeDeg > 15.0) continue;
+          // R4: In low-friction sand traps (mu < 0.45), max safe slope drops to 10.0°
+          if (cellFric < 0.45 && effSlopeDeg > 10.0) continue;
+        } else {
+          // H1: Astronaut Hike strictly forbidden from uphill > +20.0° or downhill < -14.0°
+          if (signedPitchDeg > 20.0 || signedPitchDeg < -14.0 || cellSlope > 20.0) continue;
+          // H2: 1-ring cliff drop-off setback (>25° neighbor)
+          if (cliffNearArr[nIdx]) continue;
+        }
+
+        let edgeCost = stepKm;
+
+        if (mode === 'ROVER_AUTOPILOT') {
+          // Continuous cost factors for safe rover routing:
+          // Prefer gentler slopes, higher traction, and penalize steep descents slightly differently than climbs
+          const pitchFactor =
+            signedPitchDeg >= 0
+              ? 1.0 + Math.pow(effSlopeDeg / 8.0, 2.0) * 1.8
+              : 1.0 + Math.pow(effSlopeDeg / 7.0, 2.2) * 2.3; // Braking downhill on regolith requires gentler corridor
+          const slipPenalty = Math.max(0, (0.76 - cellFric) * 4.5);
+          edgeCost *= pitchFactor + slipPenalty;
+        } else {
+          // Continuous cost factors for Astronaut EVA Walk:
+          // Tobler's Martian metabolic oxygen expenditure + isohypse contouring
+          const tanTheta = dz / stepMeters;
+          const toblerFactor = Math.exp(3.5 * Math.abs(tanTheta + 0.05));
+          const downhillBrakingPenalty =
+            signedPitchDeg < -5.0 ? Math.pow(Math.abs(signedPitchDeg) / 8.0, 2.0) * 1.9 : 0;
+          const contourPenalty = (Math.abs(dz) / Math.max(10.0, stepMeters)) * 3.8;
+          edgeCost *= toblerFactor * 0.8 + downhillBrakingPenalty + contourPenalty;
+        }
+
+        // For the Return Leg (B2 -> A1), gently encourage an independent return loop corridor
+        // (while still allowing shared safe passes if a narrow canyon bottleneck is the only safe way)
+        if (outboundUsedSet && outboundUsedSet.has(nIdx) && nIdx !== fromIdx && nIdx !== toIdx) {
+          edgeCost *= 1.38;
+        }
+
+        const tentativeG = gScore[current] + edgeCost;
+        if (tentativeG < gScore[nIdx]) {
+          cameFrom[nIdx] = current;
+          gScore[nIdx] = tentativeG;
+          fScore[nIdx] = tentativeG + surfaceDistanceKm(lat2, lon2, latGoal, lonGoal) * 0.92;
+          if (!openList.includes(nIdx)) {
+            openList.push(nIdx);
+          }
+        }
+      }
+    }
+
+    return null; // Unreachable without violating hard safety constraints!
+  };
+
+  // 1. Compute Outbound Leg (A1 -> B2)
+  const outboundRaw = runStrictLegAStar(nodeA.idx, nodeB.idx, null);
+  if (!outboundRaw) {
+    return {
+      mode,
+      isTraversable: false,
+      failureReason:
+        mode === 'ROVER_AUTOPILOT'
+          ? 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Every corridor between A1 and B2 exceeds the 15.0° Rover Rollover Limit.'
+          : 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Blocked by >20° climbs, >14° descents, or >25° cliff scarps.',
+      outboundPoints: [],
+      returnPoints: [],
+      waypoints: [],
+      segments: [],
+      profile: [],
+      outboundDistKm: 0,
+      returnDistKm: 0,
+      totalRoundTripKm: 0,
+      estRoundTripTimeMin: 0,
+      maxSlopeDeg: maxH1.slope > 0 ? Math.round(maxH1.slope) : 18,
+      avgFrictionMu: 0,
+      estEnergyWh: 0,
+      hazardPoints,
+    };
+  }
+
+  // 2. Compute Safe Return Leg (B2 -> A1)
+  const outboundSet = new Set<number>(outboundRaw);
+  const returnRaw = runStrictLegAStar(nodeB.idx, nodeA.idx, outboundSet);
+  if (!returnRaw) {
+    return {
+      mode,
+      isTraversable: false,
+      failureReason:
+        mode === 'ROVER_AUTOPILOT'
+          ? 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Cannot safely return from B2 to A1 without exceeding the 15.0° slope limit.'
+          : 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Outbound climb exceeds the -14.0° maximum safe downhill descent limit on return!',
+      outboundPoints: [],
+      returnPoints: [],
+      waypoints: [],
+      segments: [],
+      profile: [],
+      outboundDistKm: 0,
+      returnDistKm: 0,
+      totalRoundTripKm: 0,
+      estRoundTripTimeMin: 0,
+      maxSlopeDeg: maxH1.slope > 0 ? Math.round(maxH1.slope) : 18,
+      avgFrictionMu: 0,
+      estEnergyWh: 0,
+      hazardPoints,
+    };
+  }
+
+  // Smooth & sample a leg
+  const smoothAndSampleLeg = (
+    rawIndices: number[],
+    legStartLat: number,
+    legStartLon: number,
+    legEndLat: number,
+    legEndLon: number
+  ) => {
+    let pts = rawIndices.map((idx, i) => {
+      if (i === 0) return { lat: legStartLat, lon: legStartLon };
+      if (i === rawIndices.length - 1) return { lat: legEndLat, lon: legEndLon };
+      const r = Math.floor(idx / GRID_N);
+      const c = idx % GRID_N;
+      return { lat: latAt(r), lon: lonAt(c) };
+    });
+
+    for (let pass = 0; pass < 2; pass++) {
+      if (pts.length < 3) break;
+      const nextPts: { lat: number; lon: number }[] = [pts[0]];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i];
+        const p1 = pts[i + 1];
+        nextPts.push({
+          lat: p0.lat * 0.75 + p1.lat * 0.25,
+          lon: p0.lon * 0.75 + p1.lon * 0.25,
+        });
+        nextPts.push({
+          lat: p0.lat * 0.25 + p1.lat * 0.75,
+          lon: p0.lon * 0.25 + p1.lon * 0.75,
+        });
+      }
+      nextPts.push(pts[pts.length - 1]);
+      pts = nextPts;
+    }
+
+    return pts.map((pt, i) => {
+      const { elevM, slopeDeg, frictionMu } = terrainField.sampleMetricsAt(pt.lat, pt.lon, 0);
+      let pitchDeg = 0;
+      if (i > 0) {
+        const prev = pts[i - 1];
+        const prevElev = terrainField.getElevationMeters(prev.lat, prev.lon);
+        const stepM = Math.max(1.0, surfaceDistanceKm(prev.lat, prev.lon, pt.lat, pt.lon) * 1000.0);
+        pitchDeg = Math.atan2(elevM - prevElev, stepM) * (180.0 / Math.PI);
+      }
+      return { lat: pt.lat, lon: pt.lon, elevM, slopeDeg, pitchDeg, frictionMu };
+    });
+  };
+
+  const outboundPoints = smoothAndSampleLeg(outboundRaw, startLat, startLon, endLat, endLon);
+  const returnPoints = smoothAndSampleLeg(returnRaw, endLat, endLon, startLat, startLon);
+
+  // Build combined Round-Trip Profile & Telemetry
+  const profile: RouteProfileSample[] = [];
+  let cumDistKm = 0;
+  let outboundDistKm = 0;
+  let returnDistKm = 0;
+  let maxSlopeDeg = 0;
+  let sumFriction = 0;
+  let totalTimeHours = 0;
+  let totalEnergyWh = 0;
+
+  const accumulateLeg = (
+    pts: typeof outboundPoints,
+    leg: 'OUTBOUND' | 'RETURN'
+  ) => {
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
+      let stepKm = 0;
+      if (i > 0) {
+        stepKm = surfaceDistanceKm(pts[i - 1].lat, pts[i - 1].lon, pt.lat, pt.lon);
+        cumDistKm += stepKm;
+        if (leg === 'OUTBOUND') outboundDistKm += stepKm;
+        else returnDistKm += stepKm;
+      }
+
+      if (pt.slopeDeg > maxSlopeDeg) maxSlopeDeg = pt.slopeDeg;
+      sumFriction += pt.frictionMu;
+
+      const speedKmh =
+        mode === 'ROVER_AUTOPILOT'
+          ? Math.max(0.65, 4.2 * (1.0 - pt.slopeDeg / 24.0) * (pt.frictionMu / 0.75))
+          : Math.max(
+              1.2,
+              4.5 * Math.exp(-3.5 * Math.abs(Math.tan((pt.pitchDeg * Math.PI) / 180) + 0.04))
+            );
+
+      const powerWatts =
+        mode === 'ROVER_AUTOPILOT'
+          ? 145 + pt.slopeDeg * 14.5 + (0.8 - pt.frictionMu) * 180
+          : 180 + Math.max(0, pt.pitchDeg) * 14.0 + pt.slopeDeg * 8.5;
+
+      if (stepKm > 0) {
+        const dtH = stepKm / speedKmh;
+        totalTimeHours += dtH;
+        totalEnergyWh += powerWatts * dtH;
+      }
+
+      const slipRiskPct = Math.min(
+        98,
+        Math.max(4, Math.round((pt.slopeDeg / 15.0) * 48 + (0.82 - pt.frictionMu) * 95))
+      );
+
+      profile.push({
+        distKm: cumDistKm,
+        elevM: pt.elevM,
+        slopeDeg: pt.slopeDeg,
+        frictionMu: pt.frictionMu,
+        slipRiskPct,
+        metabolicWatts: Math.round(powerWatts),
+        leg,
+      });
+    }
+  };
+
+  accumulateLeg(outboundPoints, 'OUTBOUND');
+  accumulateLeg(returnPoints, 'RETURN');
+
+  // Waypoints: A1 (Origin), A2 (Outbound Midpoint), B2 (Destination), R1 (Return Midpoint)
+  const midOut = outboundPoints[Math.floor(outboundPoints.length / 2)];
+  const midRet = returnPoints[Math.floor(returnPoints.length / 2)];
+  const startPt = outboundPoints[0];
+  const endPt = outboundPoints[outboundPoints.length - 1];
+
+  const waypoints: RouteWaypoint[] = [
+    {
+      id: 'A1',
+      label: 'A1',
+      lat: startPt.lat,
+      lon: startPt.lon,
+      elevM: startPt.elevM,
+      slopeDeg: startPt.slopeDeg,
+      frictionMu: startPt.frictionMu,
+      distFromStartKm: 0,
+      metabolicWatts: 190,
+      speedKmh: 4.1,
+    },
+    {
+      id: 'A2',
+      label: 'A2',
+      lat: midOut.lat,
+      lon: midOut.lon,
+      elevM: midOut.elevM,
+      slopeDeg: midOut.slopeDeg,
+      frictionMu: midOut.frictionMu,
+      distFromStartKm: Number((outboundDistKm * 0.5).toFixed(2)),
+      metabolicWatts: Math.round(180 + midOut.slopeDeg * 12),
+      speedKmh: Number(Math.max(1.2, 4.2 - midOut.slopeDeg * 0.14).toFixed(1)),
+    },
+    {
+      id: 'B2',
+      label: 'B2',
+      lat: endPt.lat,
+      lon: endPt.lon,
+      elevM: endPt.elevM,
+      slopeDeg: endPt.slopeDeg,
+      frictionMu: endPt.frictionMu,
+      distFromStartKm: Number(outboundDistKm.toFixed(2)),
+      metabolicWatts: Math.round(180 + endPt.slopeDeg * 12),
+      speedKmh: Number(Math.max(1.2, 4.2 - endPt.slopeDeg * 0.14).toFixed(1)),
+    },
+    {
+      id: 'R1',
+      label: 'R1',
+      lat: midRet.lat,
+      lon: midRet.lon,
+      elevM: midRet.elevM,
+      slopeDeg: midRet.slopeDeg,
+      frictionMu: midRet.frictionMu,
+      distFromStartKm: Number((outboundDistKm + returnDistKm * 0.5).toFixed(2)),
+      metabolicWatts: Math.round(180 + midRet.slopeDeg * 12),
+      speedKmh: Number(Math.max(1.2, 4.2 - midRet.slopeDeg * 0.14).toFixed(1)),
+    },
+  ];
+
+  // Build 4 Round-Trip Segment Cards:
+  // 1) Outbound A1 -> A2
+  // 2) Outbound A2 -> B2
+  // 3) Return   B2 -> R1
+  // 4) Return   R1 -> A1
+  const summarizeSlice = (
+    pts: typeof outboundPoints,
+    i0: number,
+    i1: number,
+    id: string,
+    leg: 'OUTBOUND' | 'RETURN',
+    title: string,
+    distKm: number
+  ): RouteSegmentSummary => {
+    let maxS = 0;
+    let sumS = 0;
+    let sumF = 0;
+    let maxP = 0;
+    let n = 0;
+    for (let i = i0; i <= i1; i++) {
+      const p = pts[i];
+      if (p.slopeDeg > maxS) maxS = p.slopeDeg;
+      if (Math.abs(p.pitchDeg) > Math.abs(maxP)) maxP = p.pitchDeg;
+      sumS += p.slopeDeg;
+      sumF += p.frictionMu;
+      n++;
+    }
+    const dispSlope = Math.round(maxS);
+    return {
+      id,
+      leg,
+      title,
+      distKm: Number(Math.max(0.1, distKm).toFixed(2)),
+      avgSlopeDeg: Math.round(sumS / Math.max(1, n)),
+      maxSlopeDeg: dispSlope,
+      maxPitchDeg: Math.round(maxP),
+      frictionMu: Number((sumF / Math.max(1, n)).toFixed(2)),
+      status: dispSlope > 14 ? 'HAZARD' : dispSlope >= 8 ? 'CAUTION' : 'SAFE',
+    };
+  };
+
+  const midOutIdx = Math.floor(outboundPoints.length / 2);
+  const midRetIdx = Math.floor(returnPoints.length / 2);
+
+  const segments: RouteSegmentSummary[] = [
+    summarizeSlice(
+      outboundPoints,
+      0,
+      midOutIdx,
+      'out-1',
+      'OUTBOUND',
+      'OUTBOUND: A1 → A2',
+      outboundDistKm * 0.5
+    ),
+    summarizeSlice(
+      outboundPoints,
+      midOutIdx,
+      outboundPoints.length - 1,
+      'out-2',
+      'OUTBOUND',
+      'OUTBOUND: A2 → B2',
+      outboundDistKm * 0.5
+    ),
+    summarizeSlice(
+      returnPoints,
+      0,
+      midRetIdx,
+      'ret-1',
+      'RETURN',
+      'RETURN: B2 → R1',
+      returnDistKm * 0.5
+    ),
+    summarizeSlice(
+      returnPoints,
+      midRetIdx,
+      returnPoints.length - 1,
+      'ret-2',
+      'RETURN',
+      'RETURN: R1 → A1',
+      returnDistKm * 0.5
+    ),
+  ];
+
+  const totalCount = outboundPoints.length + returnPoints.length;
+
+  return {
+    mode,
+    isTraversable: true,
+    failureReason: null,
+    outboundPoints,
+    returnPoints,
+    waypoints,
+    segments,
+    profile,
+    outboundDistKm: Number(outboundDistKm.toFixed(2)),
+    returnDistKm: Number(returnDistKm.toFixed(2)),
+    totalRoundTripKm: Number((outboundDistKm + returnDistKm).toFixed(2)),
+    estRoundTripTimeMin: Math.max(6, Math.round(totalTimeHours * 60)),
+    maxSlopeDeg: Math.round(maxSlopeDeg),
+    avgFrictionMu: Number((sumFriction / Math.max(1, totalCount)).toFixed(2)),
+    estEnergyWh: Math.max(40, Math.round(totalEnergyWh)),
+    hazardPoints,
+  };
+}
+
+// ============================================================================
+// MAIN REACT COMPONENT — ARES-NAVIGATOR TACTICAL COMMAND & ROUTE PLANNER
 // ============================================================================
 export default function MarsGlobeViewer() {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // UI & Expedition Site State
+  // Primary View & Navigation Modes
   const [initialLoading, setInitialLoading] = useState<boolean>(true);
   const [selectedSite, setSelectedSite] = useState<ExpeditionSite>(EXPEDITION_SITES[0]);
-  const [projectedMarkers, setProjectedMarkers] = useState<ProjectedMarkerPos[]>([]);
-  const [showSiteMarkers, setShowSiteMarkers] = useState<boolean>(true);
+  const [isGlobalCommandView, setIsGlobalCommandView] = useState<boolean>(false);
 
+  // Routing State (with Option to Exit Routing Mode Completely!)
+  const [routingEnabled, setRoutingEnabled] = useState<boolean>(true);
+  const [traverseMode, setTraverseMode] = useState<TraverseMode>('ROVER_AUTOPILOT');
+  const [leftPanelTab, setLeftPanelTab] = useState<'TELEMETRY' | 'ROUTE'>('ROUTE');
+  const [pickingMode, setPickingMode] = useState<PickingPointMode>('NONE');
+  const [showReturnLeg, setShowReturnLeg] = useState<boolean>(true);
+
+  const [routeEndpoints, setRouteEndpoints] = useState<{
+    startLat: number;
+    startLon: number;
+    endLat: number;
+    endLon: number;
+  }>({
+    startLat: EXPEDITION_SITES[0].defaultRoute[0],
+    startLon: EXPEDITION_SITES[0].defaultRoute[1],
+    endLat: EXPEDITION_SITES[0].defaultRoute[2],
+    endLon: EXPEDITION_SITES[0].defaultRoute[3],
+  });
+
+  const [activeRouteData, setActiveRouteData] = useState<ComputedRoundTripRoute | null>(null);
+
+  // Mouse cursor screen position for auto-hiding nearby map legends when viewing routes
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number }>({ x: -9999, y: -9999 });
+
+  // Projected 2D Screen Overlays
+  const [projectedMarkers, setProjectedMarkers] = useState<ProjectedMarkerPos[]>([]);
+  const [projectedRouteTags, setProjectedRouteTags] = useState<ProjectedRouteTag[]>([]);
+  const [projectedPanoMarkers, setProjectedPanoMarkers] = useState<
+    { station: RoverPanoramaStation; x: number; y: number; visible: boolean }[]
+  >([]);
+  const [showPanoMarkers, setShowPanoMarkers] = useState<boolean>(true);
+  const [activeStreetViewStation, setActiveStreetViewStation] =
+    useState<RoverPanoramaStation | null>(null);
+
+  // Real-Time Mars Astronomical Clock & Sun Sync State
+  const [syncRealMarsTime, setSyncRealMarsTime] = useState<boolean>(true);
+  // Use a deterministic timestamp for initial SSR/hydration render; useEffect immediately syncs to live Date.now()
+  const [marsEphemeris, setMarsEphemeris] = useState<RealMarsEphemeris>(() =>
+    computeRealMarsTimeAndSun(77.4508, 1763148000000)
+  );
+
+  // Live Telemetry & Inclinometer State
   const [maxRenderedZoom, setMaxRenderedZoom] = useState<number>(0);
   const [visibleTileCount, setVisibleTileCount] = useState<number>(2);
   const [streamingCount, setStreamingCount] = useState<number>(0);
-  const [cameraTiltUI, setCameraTiltUI] = useState<number>(38);
-  const [centerTileInfo, setCenterTileInfo] = useState<{
-    z: number;
-    row: number;
-    col: number;
+  const [demVersion, setDemVersion] = useState<number>(0);
+
+  const [liveTelemetry, setLiveTelemetry] = useState<{
     lat: number;
     lon: number;
     elevM: number;
     altitudeKm: number;
-    resMetersPerPx: number;
+    pitchDeg: number;
+    rollDeg: number;
+    slopeDeg: number;
+    headingDeg: number;
+    compassDir: string;
+    frictionMu: number;
+    tractionPct: number;
+    slipRiskPct: number;
+    speedKmh: number;
+    wheelTorques: [number, number, number, number, number, number];
+    o2SatPct: number;
+    suitPressureKpa: number;
+    heartRateBpm: number;
+    radiationMsvH: number;
+    externalTempC: number;
+    atmosPresPa: number;
     qualityTierLabel: string;
-    activeSiteName: string | null;
   }>({
-    z: 8,
-    row: 101,
-    col: 366,
     lat: 18.4447,
     lon: 77.4508,
     elevM: -2540,
-    altitudeKm: 42,
-    resMetersPerPx: 145,
-    qualityTierLabel: 'ULTRA-HD SITE (Max Z12)',
-    activeSiteName: 'Jezero Crater Delta Front',
+    altitudeKm: 38,
+    pitchDeg: 4.2,
+    rollDeg: -1.8,
+    slopeDeg: 4.6,
+    headingDeg: 57,
+    compassDir: 'NE',
+    frictionMu: 0.75,
+    tractionPct: 98,
+    slipRiskPct: 12,
+    speedKmh: 0.84,
+    wheelTorques: [86, 76, 76, 45, 35, 52],
+    o2SatPct: 98,
+    suitPressureKpa: 34.0,
+    heartRateBpm: 76,
+    radiationMsvH: 0.12,
+    externalTempC: -62,
+    atmosPresPa: 710,
+    qualityTierLabel: 'ULTRA-HD Z12',
   });
 
-  // Sun & Visual Controls State
+  // Sun & Layer Controls
   const [sunAzimuth, setSunAzimuth] = useState<number>(115);
   const [sunElevation, setSunElevation] = useState<number>(38);
-  const [sunIntensity, setSunIntensity] = useState<number>(2.8);
-  const [ambientIntensity, setAmbientIntensity] = useState<number>(0.85);
-  const [lockSunToCamera, setLockSunToCamera] = useState<boolean>(false);
-
-  const [exaggeration, setExaggeration] = useState<number>(3.5);
+  const [exaggeration, setExaggeration] = useState<number>(1.0);
   const [layerMode, setLayerMode] = useState<VisualLayerMode>('realistic');
   const [wireframe, setWireframe] = useState<boolean>(false);
-  const [showTileBorders, setShowTileBorders] = useState<boolean>(false);
-  const [showAtmosphere, setShowAtmosphere] = useState<boolean>(true);
 
-  // Mutable Refs for 3D Engine
+  // Mutable 3D Engine Refs
+  const terrainFieldRef = useRef<UnifiedMarsTerrainField | null>(null);
   const tileGroupRef = useRef<THREE.Group | null>(null);
   const markers3DGroupRef = useRef<THREE.Group | null>(null);
+  const orbitalRingsGroupRef = useRef<THREE.Group | null>(null);
+  const route3DGroupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
   const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
@@ -1188,194 +2376,290 @@ export default function MarsGlobeViewer() {
   const rootsRef = useRef<QuadTileNode[]>([]);
   const schedulerRef = useRef<TileDownloadScheduler | null>(null);
 
-  // Dedicated Spherical Planetary Camera State (originating at Jezero Crater Delta Front)
   const navStateRef = useRef({
     focusLat: 18.4447,
     focusLon: 77.4508,
     targetLat: 18.4447,
     targetLon: 77.4508,
-    altitude: (42 / MARS_RADIUS_KM) * GLOBE_RADIUS,
-    targetAltitude: (42 / MARS_RADIUS_KM) * GLOBE_RADIUS,
-    tiltDeg: 38,
-    targetTiltDeg: 38,
-    bearingDeg: 0,
-    targetBearingDeg: 0,
+    altitude: (38 / MARS_RADIUS_KM) * GLOBE_RADIUS,
+    targetAltitude: (38 / MARS_RADIUS_KM) * GLOBE_RADIUS,
+    tiltDeg: 40,
+    targetTiltDeg: 40,
+    bearingDeg: 57,
+    targetBearingDeg: 57,
     lastWheelTime: 0,
   });
 
   const paramsRef = useRef({
-    exaggeration: 3.5,
+    exaggeration: 1.0,
     wireframe: false,
-    showTileBorders: false,
-    showSiteMarkers: true,
     layerMode: 'realistic' as VisualLayerMode,
-    lockSunToCamera: false,
     sunAzimuth: 115,
     sunElevation: 38,
+    syncRealMarsTime: true,
+    pickingMode: 'NONE' as PickingPointMode,
+    routingEnabled: true,
   });
+
+  useEffect(() => {
+    paramsRef.current.pickingMode = pickingMode;
+  }, [pickingMode]);
+
+  useEffect(() => {
+    paramsRef.current.routingEnabled = routingEnabled;
+    if (route3DGroupRef.current) {
+      route3DGroupRef.current.visible = routingEnabled;
+    }
+  }, [routingEnabled]);
+
+  useEffect(() => {
+    paramsRef.current.syncRealMarsTime = syncRealMarsTime;
+  }, [syncRealMarsTime]);
+
+  // Real-time 1-second Mars Astronomical Ephemeris & Clock Ticker
+  useEffect(() => {
+    const tickMarsClock = () => {
+      const ephem = computeRealMarsTimeAndSun(navStateRef.current.focusLon);
+      setMarsEphemeris(ephem);
+      if (paramsRef.current.syncRealMarsTime) {
+        setSunAzimuth(Math.round((ephem.subsolarLon + 360) % 360));
+        setSunElevation(Math.round(ephem.subsolarLat));
+      }
+    };
+    tickMarsClock();
+    const timer = setInterval(tickMarsClock, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Rebuild 3D Outbound (A->B) & Return (B->A) Routes whenever endpoints, mode, or DEM updates
+  const rebuildRoutesAndMeshes = useCallback(() => {
+    const terrainField = terrainFieldRef.current;
+    const routeGroup = route3DGroupRef.current;
+    if (!terrainField || !routeGroup) return;
+
+    while (routeGroup.children.length > 0) {
+      const child = routeGroup.children[0] as THREE.Mesh;
+      routeGroup.remove(child);
+      child.geometry?.dispose();
+    }
+
+    if (!routingEnabled) {
+      setActiveRouteData(null);
+      return;
+    }
+
+    const routeData = computeRoundTripSafeRoute(
+      routeEndpoints.startLat,
+      routeEndpoints.startLon,
+      routeEndpoints.endLat,
+      routeEndpoints.endLon,
+      traverseMode,
+      terrainField
+    );
+    setActiveRouteData(routeData);
+
+    const endpointRadius = Math.max(
+      0.008,
+      Math.min(
+        0.045,
+        (surfaceDistanceKm(
+          routeEndpoints.startLat,
+          routeEndpoints.startLon,
+          routeEndpoints.endLat,
+          routeEndpoints.endLon
+        ) /
+          MARS_RADIUS_KM) *
+          GLOBE_RADIUS *
+          0.025
+      )
+    );
+
+    // Always place Origin (A1) & Destination (B2) endpoint markers on the 3D terrain
+    const placeEndpointPin = (lat: number, lon: number, colorHex: number) => {
+      const elev = terrainField.getElevationMeters(lat, lon);
+      const rad = elevationMetersToRadius(elev, paramsRef.current.exaggeration) + 0.015;
+      const pos = latLonToVector3(lat, lon, rad);
+      const pin = new THREE.Mesh(
+        new THREE.SphereGeometry(endpointRadius * 1.4, 16, 16),
+        new THREE.MeshBasicMaterial({ color: colorHex })
+      );
+      pin.position.copy(pos);
+      routeGroup.add(pin);
+    };
+
+    placeEndpointPin(routeEndpoints.startLat, routeEndpoints.startLon, 0x10b981);
+    placeEndpointPin(routeEndpoints.endLat, routeEndpoints.endLon, 0xef4444);
+
+    // If the route is UNTRAVERSABLE, do NOT draw a fake route line through dangerous terrain!
+    if (!routeData.isTraversable) return;
+
+    const buildLegTube = (
+      pts: typeof routeData.outboundPoints,
+      colorHex: number,
+      radiusOffset: number,
+      tubeR: number
+    ) => {
+      if (pts.length < 2) return;
+      const pts3D = pts.map((p) => {
+        const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + radiusOffset;
+        return latLonToVector3(p.lat, p.lon, rad);
+      });
+
+      const curve = new THREE.CatmullRomCurve3(pts3D);
+      const tubeGeom = new THREE.TubeGeometry(
+        curve,
+        Math.min(180, pts3D.length * 3),
+        tubeR,
+        8,
+        false
+      );
+      const tubeMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.95,
+      });
+      routeGroup.add(new THREE.Mesh(tubeGeom, tubeMat));
+
+      const glowGeom = new THREE.TubeGeometry(
+        curve,
+        Math.min(120, pts3D.length * 2),
+        tubeR * 2.2,
+        8,
+        false
+      );
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.22,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      routeGroup.add(new THREE.Mesh(glowGeom, glowMat));
+    };
+
+    const tubeR = Math.max(0.002, endpointRadius * 0.36);
+
+    // Outbound Leg (A1 -> B2): Cyan
+    buildLegTube(routeData.outboundPoints, 0x00f0ff, 0.012, tubeR);
+
+    // Safe Return / Walkback Leg (B2 -> A1): Amber/Gold
+    if (showReturnLeg) {
+      buildLegTube(routeData.returnPoints, 0xf59e0b, 0.015, tubeR * 0.9);
+    }
+  }, [routeEndpoints, routingEnabled, showReturnLeg, traverseMode]);
+
+  useEffect(() => {
+    rebuildRoutesAndMeshes();
+  }, [rebuildRoutesAndMeshes, exaggeration, demVersion]);
 
   useEffect(() => {
     paramsRef.current.exaggeration = exaggeration;
     paramsRef.current.wireframe = wireframe;
-    paramsRef.current.showTileBorders = showTileBorders;
 
     const tileGroup = tileGroupRef.current;
-    if (!tileGroup) return;
+    const terrainField = terrainFieldRef.current;
+    if (!tileGroup || !terrainField) return;
 
     const traverseAndUpdate = (node: QuadTileNode) => {
+      node.refreshUnifiedDemAndSlope(terrainField);
+      node.applyVisualLayerToCanvas(paramsRef.current.layerMode);
       if (node.mesh) {
-        node.buildOrUpdateMesh(exaggeration, wireframe, showTileBorders, tileGroup);
+        node.buildOrUpdateMesh(exaggeration, wireframe, false, tileGroup, terrainField);
       }
       if (node.children) {
         node.children.forEach(traverseAndUpdate);
       }
     };
     rootsRef.current.forEach(traverseAndUpdate);
-  }, [exaggeration, wireframe, showTileBorders]);
-
-  useEffect(() => {
-    paramsRef.current.showSiteMarkers = showSiteMarkers;
-    if (markers3DGroupRef.current) {
-      markers3DGroupRef.current.visible = showSiteMarkers;
-    }
-  }, [showSiteMarkers]);
-
-  useEffect(() => {
-    paramsRef.current.lockSunToCamera = lockSunToCamera;
-    paramsRef.current.sunAzimuth = sunAzimuth;
-    paramsRef.current.sunElevation = sunElevation;
-  }, [lockSunToCamera, sunAzimuth, sunElevation]);
+  }, [exaggeration, wireframe, demVersion]);
 
   const updateSunSystem = useCallback(() => {
     if (!sunLightRef.current || !hemiLightRef.current || !sunMeshRef.current) return;
-
-    let sunPos: THREE.Vector3;
-    if (paramsRef.current.lockSunToCamera && cameraRef.current) {
-      const camPos = cameraRef.current.position.clone().normalize();
-      const up = new THREE.Vector3(0, 1, 0);
-      const right = new THREE.Vector3().crossVectors(up, camPos).normalize();
-      const localUp = new THREE.Vector3().crossVectors(camPos, right).normalize();
-      sunPos = camPos
-        .clone()
-        .multiplyScalar(0.65)
-        .addScaledVector(right, 0.55)
-        .addScaledVector(localUp, 0.45)
-        .normalize()
-        .multiplyScalar(450);
-    } else {
-      sunPos = latLonToVector3(paramsRef.current.sunElevation, paramsRef.current.sunAzimuth, 450);
-    }
-
+    const sunPos = latLonToVector3(sunElevation, sunAzimuth, 450);
     sunLightRef.current.position.copy(sunPos);
-    sunLightRef.current.intensity = sunIntensity;
-    hemiLightRef.current.intensity = ambientIntensity;
     sunMeshRef.current.position.copy(sunPos);
 
     if (atmosphereRef.current) {
       const mat = atmosphereRef.current.material as THREE.ShaderMaterial;
       mat.uniforms.uSunDirection.value.copy(sunPos).normalize();
     }
-  }, [sunIntensity, ambientIntensity]);
+  }, [sunAzimuth, sunElevation]);
 
   useEffect(() => {
+    paramsRef.current.sunAzimuth = sunAzimuth;
+    paramsRef.current.sunElevation = sunElevation;
     updateSunSystem();
-  }, [sunAzimuth, sunElevation, sunIntensity, ambientIntensity, lockSunToCamera, updateSunSystem]);
+  }, [sunAzimuth, sunElevation, updateSunSystem]);
 
-  useEffect(() => {
-    if (atmosphereRef.current) {
-      atmosphereRef.current.visible = showAtmosphere;
-    }
-  }, [showAtmosphere]);
-
-  const sampleElevationAtLatLon = useCallback(
-    (lat: number, lon: number): { elevM: number; node: QuadTileNode | null } => {
-      const nLon = normalizeLon(lon);
-      let current: QuadTileNode | null =
-        rootsRef.current.find((r) => nLon >= r.lonMin && nLon <= r.lonMax) ||
-        rootsRef.current[0] ||
-        null;
-
-      while (current && current.children) {
-        const nextChild: QuadTileNode | undefined = current.children.find(
-          (ch) =>
-            nLon >= ch.lonMin &&
-            nLon <= ch.lonMax &&
-            lat >= ch.latMin &&
-            lat <= ch.latMax
-        );
-        if (nextChild) {
-          current = nextChild;
-        } else {
-          break;
-        }
-      }
-
-      if (!current) return { elevM: -2000, node: null };
-
-      const u = Math.max(
-        0,
-        Math.min(1, (nLon - current.lonMin) / (current.lonMax - current.lonMin))
-      );
-      const v = Math.max(
-        0,
-        Math.min(1, (current.latMax - lat) / (current.latMax - current.latMin))
-      );
-      const c = Math.min(TILE_SEGMENTS, Math.round(u * TILE_SEGMENTS));
-      const r = Math.min(TILE_SEGMENTS, Math.round(v * TILE_SEGMENTS));
-      return {
-        elevM: current.demGrid[r * DEM_GRID_SIZE + c],
-        node: current,
-      };
-    },
-    []
-  );
-
-  // Fly Camera to Expedition Site (or Global Orbit View)
   const flyToExpeditionSite = useCallback((site: ExpeditionSite) => {
     setSelectedSite(site);
+    setIsGlobalCommandView(false);
+    setActiveStreetViewStation(null);
+    terrainFieldRef.current?.ensureSiteMasterDemLoaded(site);
+
     const nav = navStateRef.current;
     nav.targetLat = site.lat;
     nav.targetLon = normalizeLon(site.lon);
     nav.targetAltitude = (site.targetAltitudeKm / MARS_RADIUS_KM) * GLOBE_RADIUS;
     nav.targetTiltDeg = site.targetTiltDeg;
-    nav.targetBearingDeg = 0;
-    setCameraTiltUI(site.targetTiltDeg);
+    nav.targetBearingDeg = 57;
 
-    if (!paramsRef.current.lockSunToCamera) {
-      setSunAzimuth(Math.round((normalizeLon(site.lon) + 35 + 360) % 360));
-      setSunElevation(Math.max(25, Math.min(58, Math.round(site.lat + 22))));
-    }
+    setRouteEndpoints({
+      startLat: site.defaultRoute[0],
+      startLon: site.defaultRoute[1],
+      endLat: site.defaultRoute[2],
+      endLon: site.defaultRoute[3],
+    });
   }, []);
 
-  const flyToGlobalOrbit = useCallback(() => {
+  const openRoverStreetView = useCallback((station: RoverPanoramaStation) => {
     const nav = navStateRef.current;
-    nav.targetAltitude = (5200 / MARS_RADIUS_KM) * GLOBE_RADIUS;
-    nav.targetTiltDeg = 10;
-    nav.targetBearingDeg = 0;
-    setCameraTiltUI(10);
+    nav.targetLat = station.lat;
+    nav.targetLon = normalizeLon(station.lon);
+    nav.targetAltitude = (14 / MARS_RADIUS_KM) * GLOBE_RADIUS;
+    nav.targetTiltDeg = 52;
+    setIsGlobalCommandView(false);
+    setActiveStreetViewStation(station);
   }, []);
 
-  const handleTiltChange = (newTilt: number) => {
-    setCameraTiltUI(newTilt);
-    navStateRef.current.targetTiltDeg = newTilt;
-  };
+  const toggleGlobalCommandView = useCallback(
+    (toGlobal: boolean) => {
+      setIsGlobalCommandView(toGlobal);
+      const nav = navStateRef.current;
+      if (toGlobal) {
+        nav.targetAltitude = (5600 / MARS_RADIUS_KM) * GLOBE_RADIUS;
+        nav.targetTiltDeg = 12;
+      } else {
+        nav.targetLat = selectedSite.lat;
+        nav.targetLon = normalizeLon(selectedSite.lon);
+        nav.targetAltitude = (selectedSite.targetAltitudeKm / MARS_RADIUS_KM) * GLOBE_RADIUS;
+        nav.targetTiltDeg = selectedSite.targetTiltDeg;
+      }
+    },
+    [selectedSite]
+  );
 
   const handleLayerModeChange = (newMode: VisualLayerMode) => {
     setLayerMode(newMode);
     paramsRef.current.layerMode = newMode;
 
-    const refreshNode = (node: QuadTileNode) => {
-      node.isLoaded = false;
-      node.cancelPendingLoad();
+    const applyModeToTree = (node: QuadTileNode) => {
+      node.applyVisualLayerToCanvas(newMode);
       if (node.children) {
-        node.children.forEach(refreshNode);
+        node.children.forEach(applyModeToTree);
       }
     };
-    rootsRef.current.forEach(refreshNode);
+    rootsRef.current.forEach(applyModeToTree);
+  };
+
+  // Helper to check if mouse cursor is near a screen coordinate (to auto-hide legends when inspecting routes!)
+  const isCursorNear = (x: number, y: number, radiusPx: number = 115): boolean => {
+    if (!routingEnabled) return false;
+    return Math.hypot(cursorPos.x - x, cursorPos.y - y) < radiusPx;
   };
 
   // ==========================================================================
-  // INITIALIZE THREE.JS SCENE, 3D SITE BEACONS, CAMERA & SELECTIVE QUADTREE
+  // INITIALIZE THREE.JS SCENE, UNIFIED TERRAIN FIELD & QUADTREE ENGINE
   // ==========================================================================
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1383,10 +2667,16 @@ export default function MarsGlobeViewer() {
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x03050a);
+    const terrainField = new UnifiedMarsTerrainField(() => {
+      setDemVersion((v) => v + 1);
+    });
+    terrainFieldRef.current = terrainField;
+    // Preload Jezero Crater Master S16 DEM immediately
+    terrainField.ensureSiteMasterDemLoaded(EXPEDITION_SITES[0]);
 
-    // Starfield
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x04070d);
+
     const starsGeom = new THREE.BufferGeometry();
     const starCount = 2000;
     const starPositions = new Float32Array(starCount * 3);
@@ -1402,11 +2692,11 @@ export default function MarsGlobeViewer() {
     scene.add(
       new THREE.Points(
         starsGeom,
-        new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, transparent: true, opacity: 0.85 })
+        new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, transparent: true, opacity: 0.8 })
       )
     );
 
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.02, 2500);
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.015, 2500);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -1420,12 +2710,13 @@ export default function MarsGlobeViewer() {
     renderer.toneMappingExposure = 1.25;
     container.appendChild(renderer.domElement);
 
-    // Lighting System
-    const hemiLight = new THREE.HemisphereLight(0xffe6d0, 0x4a2c1d, 0.85);
+    // Higher hemisphere ambient fill so even night-side Mars remains inspectable when synced with real Mars time
+    const hemiLight = new THREE.HemisphereLight(0xffe6d0, 0x6b442e, 1.15);
     scene.add(hemiLight);
     hemiLightRef.current = hemiLight;
 
-    const initSunPos = latLonToVector3(38, 115, 450);
+    const initEphem = computeRealMarsTimeAndSun(77.4508);
+    const initSunPos = latLonToVector3(initEphem.subsolarLat, initEphem.subsolarLon, 450);
     const sunLight = new THREE.DirectionalLight(0xfff6eb, 2.8);
     sunLight.position.copy(initSunPos);
     scene.add(sunLight);
@@ -1439,32 +2730,11 @@ export default function MarsGlobeViewer() {
     scene.add(sunMesh);
     sunMeshRef.current = sunMesh;
 
-    const coronaCanvas = document.createElement('canvas');
-    coronaCanvas.width = 128;
-    coronaCanvas.height = 128;
-    const cCtx = coronaCanvas.getContext('2d')!;
-    const grad = cCtx.createRadialGradient(64, 64, 8, 64, 64, 64);
-    grad.addColorStop(0, 'rgba(255, 250, 230, 1)');
-    grad.addColorStop(0.35, 'rgba(255, 190, 100, 0.55)');
-    grad.addColorStop(1, 'rgba(255, 100, 30, 0)');
-    cCtx.fillStyle = grad;
-    cCtx.fillRect(0, 0, 128, 128);
-    const coronaSprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: new THREE.CanvasTexture(coronaCanvas),
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-    );
-    coronaSprite.scale.set(45, 45, 1);
-    sunMesh.add(coronaSprite);
-
-    // Atmosphere Glow Shell
     const atmosGeom = new THREE.SphereGeometry(GLOBE_RADIUS * 1.022, 96, 64);
     const atmosMat = new THREE.ShaderMaterial({
       uniforms: {
         uSunDirection: { value: initSunPos.clone().normalize() },
-        uAtmosphereColor: { value: new THREE.Color(0xe07b42) },
+        uAtmosphereColor: { value: new THREE.Color(0xd87c4a) },
       },
       vertexShader: `
         varying vec3 vWorldNormal;
@@ -1485,7 +2755,7 @@ export default function MarsGlobeViewer() {
           float rim = 1.0 - max(dot(vWorldNormal, -vViewDir), 0.0);
           float fresnel = pow(rim, 2.8);
           float sunFactor = smoothstep(-0.35, 0.8, dot(vWorldNormal, uSunDirection));
-          float alpha = fresnel * (0.18 + 0.82 * sunFactor) * 0.55;
+          float alpha = fresnel * (0.22 + 0.78 * sunFactor) * 0.55;
           gl_FragColor = vec4(uAtmosphereColor, alpha);
         }
       `,
@@ -1498,13 +2768,43 @@ export default function MarsGlobeViewer() {
     scene.add(atmosphereMesh);
     atmosphereRef.current = atmosphereMesh;
 
+    // 3D Orbital Rings for Global Command View
+    const orbitalRingsGroup = new THREE.Group();
+    scene.add(orbitalRingsGroup);
+    orbitalRingsGroupRef.current = orbitalRingsGroup;
+
+    const createOrbitRing = (
+      radius: number,
+      tiltXDeg: number,
+      tiltZDeg: number,
+      colorHex: number,
+      opacity: number
+    ) => {
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 128; i++) {
+        const ang = (i / 128) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(ang) * radius, 0, Math.sin(ang) * radius));
+      }
+      const geom = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity });
+      const loop = new THREE.Line(geom, mat);
+      loop.rotation.x = (tiltXDeg * Math.PI) / 180;
+      loop.rotation.z = (tiltZDeg * Math.PI) / 180;
+      orbitalRingsGroup.add(loop);
+    };
+
+    createOrbitRing(GLOBE_RADIUS * 1.18, 24, -15, 0x00f0ff, 0.55);
+    createOrbitRing(GLOBE_RADIUS * 1.24, -18, 22, 0xf59e0b, 0.45);
+    createOrbitRing(GLOBE_RADIUS * 1.32, 35, 8, 0x38bdf8, 0.25);
+
     const tileGroup = new THREE.Group();
     scene.add(tileGroup);
     tileGroupRef.current = tileGroup;
 
-    // ========================================================================
-    // 3D SURFACE BEACONS & PULSING RINGS FOR THE 4 EXPEDITION SITES
-    // ========================================================================
+    const route3DGroup = new THREE.Group();
+    scene.add(route3DGroup);
+    route3DGroupRef.current = route3DGroup;
+
     const markers3DGroup = new THREE.Group();
     scene.add(markers3DGroup);
     markers3DGroupRef.current = markers3DGroup;
@@ -1519,44 +2819,41 @@ export default function MarsGlobeViewer() {
       const siteGroup = new THREE.Group();
       const colorObj = new THREE.Color(site.color);
 
-      // Vertical laser stem along local Z (oriented via lookAt outward normal)
-      const stemGeom = new THREE.CylinderGeometry(0.035, 0.01, 2.4, 12);
+      const stemGeom = new THREE.CylinderGeometry(0.035, 0.01, 2.2, 12);
       stemGeom.rotateX(Math.PI / 2);
-      stemGeom.translate(0, 0, 1.2);
-      const stemMat = new THREE.MeshBasicMaterial({
-        color: colorObj,
-        transparent: true,
-        opacity: 0.85,
-      });
-      siteGroup.add(new THREE.Mesh(stemGeom, stemMat));
+      stemGeom.translate(0, 0, 1.1);
+      siteGroup.add(
+        new THREE.Mesh(
+          stemGeom,
+          new THREE.MeshBasicMaterial({ color: colorObj, transparent: true, opacity: 0.85 })
+        )
+      );
 
-      // Glowing beacon tip sphere
-      const tipGeom = new THREE.SphereGeometry(0.18, 16, 16);
-      tipGeom.translate(0, 0, 2.45);
-      const tipMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-      siteGroup.add(new THREE.Mesh(tipGeom, tipMat));
-
-      // Inner target ring on surface
       const innerRingGeom = new THREE.RingGeometry(0.28, 0.42, 32);
       innerRingGeom.translate(0, 0, 0.04);
-      const innerRingMat = new THREE.MeshBasicMaterial({
-        color: colorObj,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.9,
-      });
-      siteGroup.add(new THREE.Mesh(innerRingGeom, innerRingMat));
+      siteGroup.add(
+        new THREE.Mesh(
+          innerRingGeom,
+          new THREE.MeshBasicMaterial({
+            color: colorObj,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.9,
+          })
+        )
+      );
 
-      // Animated pulsing outer ring
-      const pulseRingGeom = new THREE.RingGeometry(0.55, 0.72, 36);
+      const pulseRingGeom = new THREE.RingGeometry(0.55, 0.74, 36);
       pulseRingGeom.translate(0, 0, 0.05);
-      const pulseRingMat = new THREE.MeshBasicMaterial({
-        color: colorObj,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.65,
-      });
-      const pulseRing = new THREE.Mesh(pulseRingGeom, pulseRingMat);
+      const pulseRing = new THREE.Mesh(
+        pulseRingGeom,
+        new THREE.MeshBasicMaterial({
+          color: colorObj,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.65,
+        })
+      );
       siteGroup.add(pulseRing);
 
       markers3DGroup.add(siteGroup);
@@ -1568,37 +2865,53 @@ export default function MarsGlobeViewer() {
     });
     schedulerRef.current = scheduler;
 
-    // Root Quadtree Tiles (z = 0)
-    const rootWest = new QuadTileNode(0, 0, 0, null);
-    const rootEast = new QuadTileNode(0, 0, 1, null);
+    const rootWest = new QuadTileNode(0, 0, 0, null, terrainField);
+    const rootEast = new QuadTileNode(0, 0, 1, null, terrainField);
     rootsRef.current = [rootWest, rootEast];
 
-    rootWest.buildOrUpdateMesh(paramsRef.current.exaggeration, false, false, tileGroup);
-    rootEast.buildOrUpdateMesh(paramsRef.current.exaggeration, false, false, tileGroup);
+    rootWest.buildOrUpdateMesh(paramsRef.current.exaggeration, false, false, tileGroup, terrainField);
+    rootEast.buildOrUpdateMesh(paramsRef.current.exaggeration, false, false, tileGroup, terrainField);
 
     const requestTileDownload = (node: QuadTileNode, priorityScore: number) => {
       if (node.isLoaded || node.isLoading || node.isDisposed) return;
       node.isLoading = true;
 
       node.cancelDownload = scheduler.enqueue(node.key, priorityScore, async () => {
-        await loadTileDataFromTrek(node, paramsRef.current.layerMode);
+        await loadTileImageryFromTrek(node, paramsRef.current.layerMode, terrainField);
         if (node.isDisposed) return;
         node.isLoading = false;
         node.buildOrUpdateMesh(
           paramsRef.current.exaggeration,
           paramsRef.current.wireframe,
-          paramsRef.current.showTileBorders,
-          tileGroup
+          false,
+          tileGroup,
+          terrainField
         );
         if (node.children) {
           for (const ch of node.children) {
             if (!ch.isLoaded) {
-              ch.inheritFromParent(node);
+              const qCol = ch.col % 2;
+              const qRow = ch.row % 2;
+              const pHalf = node.texSize / 2;
+              const bCtx = ch.baseImageryCanvas.getContext('2d')!;
+              bCtx.drawImage(
+                node.baseImageryCanvas,
+                qCol * pHalf,
+                qRow * pHalf,
+                pHalf,
+                pHalf,
+                0,
+                0,
+                ch.texSize,
+                ch.texSize
+              );
+              ch.applyVisualLayerToCanvas(paramsRef.current.layerMode);
               ch.buildOrUpdateMesh(
                 paramsRef.current.exaggeration,
                 paramsRef.current.wireframe,
-                paramsRef.current.showTileBorders,
-                tileGroup
+                false,
+                tileGroup,
+                terrainField
               );
             }
           }
@@ -1613,17 +2926,19 @@ export default function MarsGlobeViewer() {
     requestTileDownload(rootEast, 100000);
 
     // ========================================================================
-    // SPHERICAL PLANETARY CAMERA CONTROLLER
+    // SPHERICAL CAMERA & INTERACTIVE START/END ROUTE POINT PICKING
     // ========================================================================
     const raycaster = new THREE.Raycaster();
     const mouseNDC = new THREE.Vector2();
     let isDragging = false;
+    let dragDistPx = 0;
     let dragButton = 0;
     let prevX = 0;
     let prevY = 0;
 
     const onPointerDown = (e: PointerEvent) => {
       isDragging = true;
+      dragDistPx = 0;
       dragButton = e.button;
       prevX = e.clientX;
       prevY = e.clientY;
@@ -1631,9 +2946,13 @@ export default function MarsGlobeViewer() {
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      setCursorPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+
       if (!isDragging) return;
       const dx = e.clientX - prevX;
       const dy = e.clientY - prevY;
+      dragDistPx += Math.hypot(dx, dy);
       prevX = e.clientX;
       prevY = e.clientY;
 
@@ -1655,8 +2974,11 @@ export default function MarsGlobeViewer() {
       } else {
         nav.targetBearingDeg = (nav.targetBearingDeg - dx * 0.35 + 360) % 360;
         nav.targetTiltDeg = Math.max(0, Math.min(65, nav.targetTiltDeg - dy * 0.28));
-        setCameraTiltUI(Math.round(nav.targetTiltDeg));
       }
+    };
+
+    const onPointerLeave = () => {
+      setCursorPos({ x: -9999, y: -9999 });
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -1665,6 +2987,35 @@ export default function MarsGlobeViewer() {
       try {
         renderer.domElement.releasePointerCapture(e.pointerId);
       } catch {}
+
+      if (dragDistPx < 6 && e.button === 0 && paramsRef.current.pickingMode !== 'NONE') {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouseNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(mouseNDC, camera);
+        const hits = raycaster.intersectObjects(tileGroup.children, false);
+        if (hits.length > 0) {
+          const hitLatLon = vector3ToLatLon(hits[0].point);
+          const modeNow = paramsRef.current.pickingMode;
+          setRoutingEnabled(true);
+          if (modeNow === 'START') {
+            setRouteEndpoints((prev) => ({
+              ...prev,
+              startLat: clampLat(hitLatLon.lat),
+              startLon: normalizeLon(hitLatLon.lon),
+            }));
+            setPickingMode('END');
+          } else if (modeNow === 'END') {
+            setRouteEndpoints((prev) => ({
+              ...prev,
+              endLat: clampLat(hitLatLon.lat),
+              endLon: normalizeLon(hitLatLon.lon),
+            }));
+            setPickingMode('NONE');
+          }
+        }
+      }
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -1674,6 +3025,9 @@ export default function MarsGlobeViewer() {
 
       const zoomFactor = Math.pow(0.82, -e.deltaY / 100);
       nav.targetAltitude = Math.max(0.055, Math.min(280.0, nav.targetAltitude * zoomFactor));
+
+      const altKm = (nav.targetAltitude / GLOBE_RADIUS) * MARS_RADIUS_KM;
+      setIsGlobalCommandView(altKm > 1800);
 
       if (e.deltaY < 0) {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -1704,6 +3058,7 @@ export default function MarsGlobeViewer() {
         nav.targetLat = clampLat(hitLatLon.lat);
         nav.targetLon = normalizeLon(hitLatLon.lon);
         nav.targetAltitude = Math.max(0.06, nav.targetAltitude * 0.48);
+        setIsGlobalCommandView(false);
       }
     };
 
@@ -1712,6 +3067,7 @@ export default function MarsGlobeViewer() {
     const domEl = renderer.domElement;
     domEl.addEventListener('pointerdown', onPointerDown);
     domEl.addEventListener('pointermove', onPointerMove);
+    domEl.addEventListener('pointerleave', onPointerLeave);
     domEl.addEventListener('pointerup', onPointerUp);
     domEl.addEventListener('wheel', onWheel, { passive: false });
     domEl.addEventListener('dblclick', onDoubleClick);
@@ -1729,7 +3085,7 @@ export default function MarsGlobeViewer() {
       const dBear = ((nav.targetBearingDeg - nav.bearingDeg + 540) % 360) - 180;
       nav.bearingDeg = (nav.bearingDeg + dBear * 0.18 + 360) % 360;
 
-      const { elevM } = sampleElevationAtLatLon(nav.focusLat, nav.focusLon);
+      const elevM = terrainField.getElevationMeters(nav.focusLat, nav.focusLon);
       const surfRadius = elevationMetersToRadius(elevM, paramsRef.current.exaggeration);
       const focusPoint3D = latLonToVector3(nav.focusLat, nav.focusLon, surfRadius);
 
@@ -1754,7 +3110,7 @@ export default function MarsGlobeViewer() {
         .addScaledVector(forward, -nav.altitude * Math.sin(effTiltRad));
 
       const camLatLon = vector3ToLatLon(camPos);
-      const { elevM: underCamElev } = sampleElevationAtLatLon(camLatLon.lat, camLatLon.lon);
+      const underCamElev = terrainField.getElevationMeters(camLatLon.lat, camLatLon.lon);
       const minCamR =
         elevationMetersToRadius(underCamElev, paramsRef.current.exaggeration) + 0.035;
       if (camPos.length() < minCamR) {
@@ -1769,28 +3125,30 @@ export default function MarsGlobeViewer() {
         .normalize();
       camera.lookAt(focusPoint3D);
 
+      if (orbitalRingsGroupRef.current) {
+        orbitalRingsGroupRef.current.visible = nav.altitude > 35.0;
+        orbitalRingsGroupRef.current.rotation.y += 0.0008;
+      }
+
       return focusPoint3D;
     };
 
-    // ========================================================================
-    // UPDATE 3D BEACONS & PROJECTED HUD MARKERS FOR THE 4 EXPEDITION SITES
-    // ========================================================================
     let frameCounter = 0;
 
-    const updateSiteBeaconsAndMarkers = () => {
+    const updateBeaconsAndOverlays = () => {
       const camPos = camera.position;
       const camDir = camPos.clone().normalize();
       const camRadius = camPos.length();
       const horizonCos = GLOBE_RADIUS / Math.max(GLOBE_RADIUS + 0.01, camRadius);
       const pulsePhase = (performance.now() * 0.0022) % 1.0;
 
-      const newProjected: ProjectedMarkerPos[] = [];
       const w = container.clientWidth;
       const h = container.clientHeight;
+      const newProjected: ProjectedMarkerPos[] = [];
 
       for (const entry of beaconEntries) {
         const { site, group, pulseRing } = entry;
-        const { elevM } = sampleElevationAtLatLon(site.lat, site.lon);
+        const elevM = terrainField.getElevationMeters(site.lat, site.lon);
         const surfR = elevationMetersToRadius(elevM, paramsRef.current.exaggeration);
         const pos3D = latLonToVector3(site.lat, site.lon, surfR);
         const normal = pos3D.clone().normalize();
@@ -1798,17 +3156,14 @@ export default function MarsGlobeViewer() {
         group.position.copy(pos3D);
         group.lookAt(pos3D.clone().add(normal));
 
-        // Scale 3D beacon dynamically with camera distance so it is visible from orbit AND close up
         const distToCam = camPos.distanceTo(pos3D);
         const beaconScale = Math.max(0.025, Math.min(3.2, distToCam * 0.022));
         group.scale.setScalar(beaconScale);
 
-        // Animate pulsing ring
         const pScale = 0.8 + pulsePhase * 1.4;
         pulseRing.scale.set(pScale, pScale, 1);
         (pulseRing.material as THREE.MeshBasicMaterial).opacity = (1.0 - pulsePhase) * 0.75;
 
-        // Project to 2D screen coordinates for clickable HUD pin
         const dotHorizon = normal.dot(camDir);
         const isFrontSide = dotHorizon >= horizonCos * 0.88;
 
@@ -1837,9 +3192,6 @@ export default function MarsGlobeViewer() {
       }
     };
 
-    // ========================================================================
-    // SELECTIVE QUALITY + LAZY WATCHED-ONLY QUADTREE LOD ENGINE
-    // ========================================================================
     const frustum = new THREE.Frustum();
     const projScreenMatrix = new THREE.Matrix4();
 
@@ -1863,7 +3215,6 @@ export default function MarsGlobeViewer() {
         const nodeNormal = node.center3D.clone().normalize();
         const tileAngularRadius = (node.spanDeg * Math.PI) / 180.0;
 
-        // 1. Strict Geometric Horizon & Viewport Culling
         const dotFocus = nodeNormal.dot(focusNormal);
         const isInFrontOfHorizon =
           node.z === 0 || dotFocus >= horizonCos - tileAngularRadius * 0.95;
@@ -1876,9 +3227,6 @@ export default function MarsGlobeViewer() {
           Math.min(distToCam, distToFocus * 1.15) - node.boundingSphere.radius * 0.45
         );
 
-        // 2. SELECTIVE QUALITY SUBDIVISION CRITERION:
-        // - Tiles intersecting any of the 4 Expedition Sites subdivide up to Z=12 (25cm HiRISE / 6m CTX)
-        // - All other tiles on Mars stop subdividing at Z=5 (MAX_GLOBAL_ZOOM = 5)
         const shouldSubdivide =
           node.z < node.maxAllowedZoom &&
           isInFrontOfHorizon &&
@@ -1895,22 +3243,24 @@ export default function MarsGlobeViewer() {
             const r2 = node.row * 2;
             const c2 = node.col * 2;
             node.children = [
-              new QuadTileNode(nextZ, r2, c2, node),
-              new QuadTileNode(nextZ, r2, c2 + 1, node),
-              new QuadTileNode(nextZ, r2 + 1, c2, node),
-              new QuadTileNode(nextZ, r2 + 1, c2 + 1, node),
+              new QuadTileNode(nextZ, r2, c2, node, terrainField),
+              new QuadTileNode(nextZ, r2, c2 + 1, node, terrainField),
+              new QuadTileNode(nextZ, r2 + 1, c2, node, terrainField),
+              new QuadTileNode(nextZ, r2 + 1, c2 + 1, node, terrainField),
             ];
             for (const ch of node.children) {
+              ch.applyVisualLayerToCanvas(paramsRef.current.layerMode);
               ch.buildOrUpdateMesh(
                 paramsRef.current.exaggeration,
                 paramsRef.current.wireframe,
-                paramsRef.current.showTileBorders,
-                tileGroup
+                false,
+                tileGroup,
+                terrainField
               );
             }
           }
 
-          node.setVisible(false, paramsRef.current.showTileBorders);
+          node.setVisible(false, false);
           for (const ch of node.children) {
             evaluateNode(ch);
           }
@@ -1924,7 +3274,7 @@ export default function MarsGlobeViewer() {
           node.children = null;
         }
 
-        node.setVisible(true, paramsRef.current.showTileBorders);
+        node.setVisible(true, false);
         renderedTiles++;
         if (node.z > highestZ) highestZ = node.z;
 
@@ -1948,26 +3298,44 @@ export default function MarsGlobeViewer() {
       }
 
       frameCounter++;
-      if (frameCounter % 10 === 0) {
+      if (frameCounter % 8 === 0) {
         setMaxRenderedZoom(highestZ);
         setVisibleTileCount(renderedTiles);
 
         const nav = navStateRef.current;
-        const { elevM, node: activeNode } = sampleElevationAtLatLon(nav.focusLat, nav.focusLon);
+        const { elevM, slopeDeg, pitchDeg, rollDeg, frictionMu } = terrainField.sampleMetricsAt(
+          nav.focusLat,
+          nav.focusLon,
+          nav.bearingDeg
+        );
         const altKm = Math.max(0.5, (nav.altitude / GLOBE_RADIUS) * MARS_RADIUS_KM);
 
-        const activeZ = activeNode ? activeNode.z : highestZ;
-        const cols = 2 * (1 << activeZ);
-        const rows = 1 * (1 << activeZ);
-        const cIdx = Math.min(
-          cols - 1,
-          Math.max(0, Math.floor(((normalizeLon(nav.focusLon) + 180) / 360) * cols))
+        const dirs8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+        const compassDir = dirs8[Math.round(nav.bearingDeg / 45) % 8];
+
+        const tractionPct = Math.min(99, Math.max(42, Math.round(frictionMu * 124 - slopeDeg * 0.8)));
+        const slipRiskPct = Math.min(95, Math.max(4, 100 - tractionPct));
+        const speedKmh = Number(
+          Math.max(0.45, 3.8 * (1 - slopeDeg / 28) * (frictionMu / 0.75)).toFixed(2)
         );
-        const rIdx = Math.min(
-          rows - 1,
-          Math.max(0, Math.floor(((90 - nav.focusLat) / 180) * rows))
-        );
-        const resMpp = (2 * Math.PI * 3396200) / (cols * (activeNode ? activeNode.texSize : 256));
+
+        const baseT = 52 + slopeDeg * 1.8;
+        const pShift = pitchDeg * 1.6;
+        const rShift = rollDeg * 1.4;
+        const clampT = (v: number) => Math.min(98, Math.max(22, Math.round(v)));
+        const wheelTorques: [number, number, number, number, number, number] = [
+          clampT(baseT + pShift + rShift),
+          clampT(baseT + pShift - rShift),
+          clampT(baseT + rShift * 0.8),
+          clampT(baseT - rShift * 0.8),
+          clampT(baseT - pShift + rShift),
+          clampT(baseT - pShift - rShift),
+        ];
+
+        const atmosPresPa = Math.round(610 * Math.exp(-elevM / 11100));
+        const ephemNow = computeRealMarsTimeAndSun(nav.focusLon);
+        const sunDot = Math.cos(((ephemNow.localHourFloat - 12.5) * Math.PI) / 12);
+        const externalTempC = Math.round(-62 + sunDot * 38 - Math.abs(nav.focusLat) * 0.35);
 
         const matchedSite = findIntersectingExpeditionSite(
           normalizeLon(nav.focusLon) - 0.05,
@@ -1976,33 +3344,38 @@ export default function MarsGlobeViewer() {
           nav.focusLat + 0.05
         );
 
-        setCenterTileInfo({
-          z: activeZ,
-          row: rIdx,
-          col: cIdx,
+        setLiveTelemetry({
           lat: nav.focusLat,
           lon: normalizeLon(nav.focusLon),
           elevM,
           altitudeKm: altKm,
-          resMetersPerPx: resMpp,
-          qualityTierLabel: matchedSite
-            ? `${matchedSite.role === 'PRIMARY LANDING SITE' ? 'ULTRA-HD' : 'HIGH-DETAIL'} (Max Z${matchedSite.maxZoom})`
-            : `GLOBAL BASELINE (Capped Z${MAX_GLOBAL_ZOOM})`,
-          activeSiteName: matchedSite ? matchedSite.name : null,
+          pitchDeg: Number(pitchDeg.toFixed(1)),
+          rollDeg: Number(rollDeg.toFixed(1)),
+          slopeDeg: Number(slopeDeg.toFixed(1)),
+          headingDeg: Math.round(nav.bearingDeg),
+          compassDir,
+          frictionMu: Number(frictionMu.toFixed(2)),
+          tractionPct,
+          slipRiskPct,
+          speedKmh,
+          wheelTorques,
+          o2SatPct: 98,
+          suitPressureKpa: 34.0,
+          heartRateBpm: Math.min(148, Math.round(72 + slopeDeg * 2.4)),
+          radiationMsvH: Number(Math.max(0.06, 0.14 + (elevM / 10000) * 0.04).toFixed(2)),
+          externalTempC,
+          atmosPresPa,
+          qualityTierLabel: matchedSite ? `ULTRA-HD Z${matchedSite.maxZoom}` : `GLOBAL Z${MAX_GLOBAL_ZOOM}`,
         });
       }
     };
 
-    // Main Render Loop
     let animId: number;
     const animate = () => {
       animId = requestAnimationFrame(animate);
       const focusPoint3D = updateSphericalCamera();
-      if (paramsRef.current.lockSunToCamera) {
-        updateSunSystem();
-      }
       updateQuadtreeLOD(focusPoint3D);
-      updateSiteBeaconsAndMarkers();
+      updateBeaconsAndOverlays();
       renderer.render(scene, camera);
     };
     animate();
@@ -2022,6 +3395,7 @@ export default function MarsGlobeViewer() {
       window.removeEventListener('resize', handleResize);
       domEl.removeEventListener('pointerdown', onPointerDown);
       domEl.removeEventListener('pointermove', onPointerMove);
+      domEl.removeEventListener('pointerleave', onPointerLeave);
       domEl.removeEventListener('pointerup', onPointerUp);
       domEl.removeEventListener('wheel', onWheel);
       domEl.removeEventListener('dblclick', onDoubleClick);
@@ -2032,490 +3406,1234 @@ export default function MarsGlobeViewer() {
         container.removeChild(domEl);
       }
     };
-  }, [sampleElevationAtLatLon, updateSunSystem]);
+  }, []);
+
+      // Project Waypoints, Hazard Badges, and 360° Rover Panorama Optic Stations to 2D Screen
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const camera = cameraRef.current;
+      const container = containerRef.current;
+      const terrainField = terrainFieldRef.current;
+      if (!camera || !container || !terrainField) {
+        setProjectedRouteTags([]);
+        setProjectedPanoMarkers([]);
+        return;
+      }
+
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      const camPos = camera.position;
+      const camDir = camPos.clone().normalize();
+      const horizonCos = GLOBE_RADIUS / Math.max(GLOBE_RADIUS + 0.01, camPos.length());
+
+      const projectLatLon = (lat: number, lon: number, lift: number) => {
+        const elevM = terrainField.getElevationMeters(lat, lon);
+        const rad = elevationMetersToRadius(elevM, exaggeration) + lift;
+        const pos3D = latLonToVector3(lat, lon, rad);
+        const normal = pos3D.clone().normalize();
+        const isFront = normal.dot(camDir) >= horizonCos * 0.9;
+        const proj = pos3D.clone().project(camera);
+        const x = (proj.x * 0.5 + 0.5) * w;
+        const y = (-proj.y * 0.5 + 0.5) * h;
+        const visible = isFront && proj.z < 1.0 && x > 40 && x < w - 40 && y > 40 && y < h - 40;
+        return { x, y, visible };
+      };
+
+      // 1. Project 360° Rover Panorama Optic Stations
+      if (showPanoMarkers) {
+        const panoList: { station: RoverPanoramaStation; x: number; y: number; visible: boolean }[] =
+          [];
+        for (const st of ROVER_PANORAMA_STATIONS) {
+          const { x, y, visible } = projectLatLon(st.lat, st.lon, 0.018);
+          panoList.push({ station: st, x, y, visible });
+        }
+        setProjectedPanoMarkers(panoList);
+      } else {
+        setProjectedPanoMarkers([]);
+      }
+
+      // 2. Project Route Waypoints & Hazard Badges
+      if (!routingEnabled || !activeRouteData) {
+        setProjectedRouteTags([]);
+        return;
+      }
+
+      const tags: ProjectedRouteTag[] = [];
+
+      if (activeRouteData.isTraversable) {
+        for (const wp of activeRouteData.waypoints) {
+          if (wp.id === 'R1' && !showReturnLeg) continue;
+          const { x, y, visible } = projectLatLon(wp.lat, wp.lon, 0.02);
+          tags.push({
+            id: `wp-${wp.id}`,
+            text: wp.label,
+            subtext:
+              wp.id === 'A1'
+                ? `ROUND-TRIP SAFE • ${wp.metabolicWatts}W / ${wp.speedKmh} km/h`
+                : undefined,
+            kind: 'WAYPOINT',
+            color: wp.id === 'B2' ? '#ef4444' : wp.id === 'R1' ? '#f59e0b' : '#00f0ff',
+            x,
+            y,
+            visible,
+          });
+        }
+      } else {
+        // Show A1 and B2 pins even when route is untraversable
+        const pA = projectLatLon(routeEndpoints.startLat, routeEndpoints.startLon, 0.02);
+        const pB = projectLatLon(routeEndpoints.endLat, routeEndpoints.endLon, 0.02);
+        tags.push({
+          id: 'wp-A1',
+          text: 'A1',
+          kind: 'WAYPOINT',
+          color: '#10b981',
+          x: pA.x,
+          y: pA.y,
+          visible: pA.visible,
+        });
+        tags.push({
+          id: 'wp-B2',
+          text: 'B2',
+          kind: 'WAYPOINT',
+          color: '#ef4444',
+          x: pB.x,
+          y: pB.y,
+          visible: pB.visible,
+        });
+      }
+
+      for (const haz of activeRouteData.hazardPoints) {
+        const { x, y, visible } = projectLatLon(haz.lat, haz.lon, 0.025);
+        tags.push({
+          id: haz.id,
+          text: haz.label,
+          kind: 'HAZARD',
+          color: '#f59e0b',
+          x,
+          y,
+          visible,
+        });
+      }
+
+      setProjectedRouteTags(tags);
+    }, 80);
+
+    return () => clearInterval(interval);
+  }, [activeRouteData, exaggeration, routeEndpoints, routingEnabled, showPanoMarkers, showReturnLeg]);
+
+  // Display accurate Mission Sol for current site (Curiosity Sol for Gale Crater, Perseverance Sol for Jezero & Mars 2020)
+  const displayedSolNumber =
+    selectedSite.id === 'mount-sharp-gale'
+      ? marsEphemeris.curiositySol
+      : marsEphemeris.perseveranceSol;
+  const displayedSolMission =
+    selectedSite.id === 'mount-sharp-gale' ? 'CURIOSITY SOL' : 'PERSEVERANCE SOL';
 
   return (
-    <div className="relative w-full h-screen bg-[#03050a] text-slate-100 overflow-hidden font-sans select-none">
-      {/* 3D WebGL Viewport */}
-      <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
-
-      {/* =====================================================================
-          INTERACTIVE 3D-PROJECTED EXPEDITION SITE MARKERS ON THE GLOBE
-         ===================================================================== */}
-      {showSiteMarkers && (
-        <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
-          {projectedMarkers.map(({ site, x, y, visible }) => {
-            if (!visible) return null;
-            const isSelected = selectedSite.id === site.id;
-            const isPrimary = site.role === 'PRIMARY LANDING SITE';
-
-            return (
-              <div
-                key={site.id}
-                style={{
-                  transform: `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`,
-                }}
-                className="absolute top-0 left-0 -translate-x-1/2 -translate-y-full pb-2 pointer-events-auto group"
-              >
-                <button
-                  onClick={() => flyToExpeditionSite(site)}
-                  title={`Fly to ${site.name} (${site.qualityBadge})`}
-                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg backdrop-blur-md border transition-all duration-200 shadow-lg hover:scale-105 ${
-                    isSelected
-                      ? 'bg-[#081220]/95 border-cyan-400/90 shadow-[0_0_16px_rgba(0,240,255,0.35)]'
-                      : 'bg-[#0b0f17]/85 border-slate-600/80 hover:border-slate-400'
-                  }`}
-                >
-                  {/* Pulsing Target Reticle Dot */}
-                  <span className="relative flex h-2.5 w-2.5 shrink-0">
-                    <span
-                      className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                      style={{ backgroundColor: site.color }}
-                    />
-                    <span
-                      className="relative inline-flex rounded-full h-2.5 w-2.5"
-                      style={{ backgroundColor: site.color }}
-                    />
-                  </span>
-
-                  <div className="text-left leading-tight">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-bold text-slate-100 whitespace-nowrap">
-                        {site.shortLabel}
-                      </span>
-                      <span
-                        className={`text-[8px] font-mono px-1 py-0.2 rounded uppercase font-semibold ${
-                          isPrimary
-                            ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/40'
-                            : 'bg-emerald-500/25 text-emerald-200 border border-emerald-400/30'
-                        }`}
-                      >
-                        {isPrimary ? 'PRIMARY Z12' : 'HUB Z12'}
-                      </span>
-                    </div>
-                    <div className="text-[9px] text-slate-300/80 font-mono whitespace-nowrap">
-                      {site.lat >= 0 ? `${site.lat.toFixed(1)}°N` : `${Math.abs(site.lat).toFixed(1)}°S`},{' '}
-                      {site.lon.toFixed(1)}°E • Click to Inspect
-                    </div>
-                  </div>
-                </button>
-
-                {/* Pointer Stem Down to 3D Beacon */}
-                <div
-                  className="mx-auto w-0.5 h-2.5 opacity-80"
-                  style={{ backgroundColor: site.color }}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Top-Left Header */}
-      <div className="absolute top-4 left-4 z-10 pointer-events-none">
-        <div className="flex items-center gap-2.5">
-          <div className="h-3 w-3 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_12px_#22d3ee]" />
-          <h1 className="text-lg md:text-2xl font-bold tracking-wider text-slate-50 uppercase drop-shadow">
-            Mars Expedition Globe
-          </h1>
-        </div>
-        <p className="text-xs text-slate-300/90 mt-0.5 max-w-lg drop-shadow">
-          Selective High-Detail Streaming: <span className="text-cyan-300 font-semibold">Zoom 12 (25cm HiRISE / 6m CTX)</span> at 4 Expedition Hubs • <span className="text-amber-300 font-semibold">Zoom 5 Lightweight</span> Global Baseline
-        </p>
-      </div>
-
-      {/* Bottom-Left: Live Quadtree Tile & Selective Quality Telemetry HUD */}
-      <div className="absolute bottom-4 left-4 z-10 bg-[#0b0f17]/90 backdrop-blur-md border border-slate-700/70 p-4 rounded-xl shadow-2xl text-xs space-y-2 w-84 pointer-events-auto">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-          <span className="text-[11px] font-bold tracking-wider text-cyan-400 uppercase">
-            Selective LOD Telemetry
-          </span>
-          <span
-            className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-              streamingCount > 0
-                ? 'bg-amber-500/20 text-amber-300 animate-pulse'
-                : 'bg-emerald-500/20 text-emerald-300'
-            }`}
-          >
-            {streamingCount > 0 ? `Streaming ${streamingCount} tiles` : 'Viewport Ready'}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
-          <div className="text-slate-400">Region Quality Tier:</div>
-          <div
-            className={`font-mono font-semibold text-right ${
-              centerTileInfo.activeSiteName ? 'text-cyan-300' : 'text-amber-300'
-            }`}
-          >
-            {centerTileInfo.qualityTierLabel}
-          </div>
-
-          <div className="text-slate-400">Watched Tile (z/y/x):</div>
-          <div className="font-mono text-slate-200 font-semibold text-right">
-            z={centerTileInfo.z} / y={centerTileInfo.row} / x={centerTileInfo.col}
-          </div>
-
-          <div className="text-slate-400">Active Region:</div>
-          <div className="font-mono text-emerald-300 text-right truncate">
-            {centerTileInfo.activeSiteName || 'Global Baseline (Low-Res)'}
-          </div>
-
-          <div className="text-slate-400">Focus Coordinates:</div>
-          <div className="font-mono text-slate-200 text-right">
-            {centerTileInfo.lat >= 0
-              ? `${centerTileInfo.lat.toFixed(3)}° N`
-              : `${Math.abs(centerTileInfo.lat).toFixed(3)}° S`}
-            , {centerTileInfo.lon.toFixed(3)}° E
-          </div>
-
-          <div className="text-slate-400">Surface Elevation:</div>
-          <div className="font-mono text-emerald-400 text-right">
-            {centerTileInfo.elevM.toFixed(0)} m
-          </div>
-
-          <div className="text-slate-400">Camera Altitude:</div>
-          <div className="font-mono text-slate-200 text-right">
-            {centerTileInfo.altitudeKm < 100
-              ? `${centerTileInfo.altitudeKm.toFixed(1)} km`
-              : `${Math.round(centerTileInfo.altitudeKm).toLocaleString()} km`}
-          </div>
-
-          <div className="text-slate-400">Ground Resolution:</div>
-          <div className="font-mono text-slate-300 text-right">
-            ~
-            {centerTileInfo.resMetersPerPx < 100
-              ? `${centerTileInfo.resMetersPerPx.toFixed(1)} m/px`
-              : `${Math.round(centerTileInfo.resMetersPerPx).toLocaleString()} m/px`}
-          </div>
-
-          <div className="text-slate-400">Active Meshes:</div>
-          <div className="font-mono text-slate-300 text-right">
-            {visibleTileCount} patches
-          </div>
-        </div>
-
-        <div className="text-[10px] text-slate-400 border-t border-slate-800 pt-1.5">
-          <span className="text-cyan-300 font-semibold">{selectedSite.name}:</span>{' '}
-          {selectedSite.description}
-        </div>
-      </div>
-
-      {/* Bottom-Right: The 4 High-Detail Expedition Sites Navigation Panel */}
-      <div className="absolute bottom-4 right-4 z-10 bg-[#0b0f17]/90 backdrop-blur-md border border-slate-700/70 p-3.5 rounded-xl shadow-2xl text-xs space-y-2.5 w-80 pointer-events-auto">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-          <div>
-            <div className="text-[11px] font-bold tracking-wider text-slate-100 uppercase">
-              High-Detail Expedition Sites
+    <div className="relative w-full h-screen bg-[#05080f] text-slate-100 overflow-hidden font-sans select-none p-2 md:p-3 flex flex-col">
+      <div className="relative flex-1 w-full h-full rounded-2xl border-2 border-slate-700/80 bg-[#070b12] shadow-[inset_0_0_50px_rgba(0,0,0,0.9),0_0_30px_rgba(0,240,255,0.08)] overflow-hidden flex flex-col">
+        {/* ===================================================================
+            TOP TACTICAL COMMAND HEADER BAR
+           =================================================================== */}
+        <header className="h-12 bg-[#0b101b]/95 border-b border-slate-700/80 px-4 flex items-center justify-between z-20 shrink-0">
+          {/* Left: System Title */}
+          <div className="flex items-center gap-3">
+            <div className="h-7 w-7 rounded bg-amber-500/15 border border-amber-500/60 flex items-center justify-center text-amber-400 font-bold text-sm">
+              ▲
             </div>
-            <div className="text-[9px] text-slate-400">
-              Ultra/High-Res Z12 Unlocked • Rest of Mars Capped at Z5
+            <div className="flex items-center gap-2 text-xs md:text-sm tracking-wider font-bold uppercase">
+              <span className="text-slate-100">
+                {layerMode === 'slope_radar' ? 'DYNAMIC SLOPE RADAR' : 'ARES-NAVIGATOR'}
+              </span>
+              <span className="text-slate-600">|</span>
+              <span className="text-slate-400 font-mono text-xs hidden sm:inline">
+                {isGlobalCommandView
+                  ? 'GLOBAL MARS COMMAND'
+                  : routingEnabled
+                  ? 'ROUND-TRIP ROUTE PLANNER'
+                  : 'FREE EXPLORATION'}
+              </span>
             </div>
           </div>
-          <button
-            onClick={flyToGlobalOrbit}
-            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] font-semibold border border-slate-700 transition-colors shrink-0"
-            title="Zoom out to inspect all 4 markers across the globe"
-          >
-            Globe View
-          </button>
-        </div>
 
-        <div className="space-y-1.5">
-          {EXPEDITION_SITES.map((site) => {
-            const isSelected = selectedSite.id === site.id;
-            const isPrimary = site.role === 'PRIMARY LANDING SITE';
-            return (
+          {/* Center: Mode Switcher + Exit Routing Button + Layer Buttons */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => {
+                setRoutingEnabled(true);
+                setTraverseMode('ROVER_AUTOPILOT');
+                setIsGlobalCommandView(false);
+              }}
+              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border ${
+                routingEnabled && !isGlobalCommandView && traverseMode === 'ROVER_AUTOPILOT'
+                  ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.35)]'
+                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
+              }`}
+            >
+              [ROVER AUTOPILOT]
+            </button>
+            <button
+              onClick={() => {
+                setRoutingEnabled(true);
+                setTraverseMode('ASTRONAUT_HIKE');
+                setIsGlobalCommandView(false);
+              }}
+              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border ${
+                routingEnabled && !isGlobalCommandView && traverseMode === 'ASTRONAUT_HIKE'
+                  ? 'bg-amber-500/25 text-amber-200 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.35)]'
+                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
+              }`}
+            >
+              [ASTRONAUT HIKE]
+            </button>
+
+            {routingEnabled && (
               <button
-                key={site.id}
-                onClick={() => flyToExpeditionSite(site)}
-                className={`w-full text-left p-2 rounded-lg transition-all border ${
-                  isSelected
-                    ? 'bg-cyan-500/15 border-cyan-500/50 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
-                    : 'bg-slate-900/60 border-slate-800/80 hover:bg-slate-800/70 hover:border-slate-700'
-                }`}
+                onClick={() => {
+                  setRoutingEnabled(false);
+                  setPickingMode('NONE');
+                }}
+                className="px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/60 transition-all"
+                title="Exit Routing Mode and hide all routes"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full shrink-0 shadow-sm"
-                      style={{ backgroundColor: site.color }}
-                    />
-                    <span className="text-[11px] font-bold text-slate-100 truncate">
-                      {site.name}
-                    </span>
-                  </div>
-                  <span
-                    className={`text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0 ${
-                      isPrimary
-                        ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/40'
-                        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    }`}
-                  >
-                    {isPrimary ? 'PRIMARY' : 'HUB'}
-                  </span>
-                </div>
-                <div className="text-[10px] text-slate-400 truncate mt-0.5 pl-4">
-                  {site.subtitle}
-                </div>
-                <div className="text-[9px] font-mono text-cyan-300/90 mt-0.5 pl-4">
-                  {site.qualityBadge}
-                </div>
+                ✕ EXIT ROUTE
               </button>
-            );
-          })}
-        </div>
-      </div>
+            )}
 
-      {/* Top-Right: Sun Illumination, Camera Tilt, Layer Architecture & Marker Controls */}
-      <div className="absolute top-4 right-4 z-10 bg-[#0b0f17]/90 backdrop-blur-md border border-slate-700/70 p-4 rounded-xl shadow-2xl text-xs space-y-3 w-80 pointer-events-auto max-h-[58vh] overflow-y-auto">
-        <div className="text-[11px] font-bold tracking-wider text-amber-400 uppercase border-b border-slate-800 pb-1 flex justify-between items-center">
-          <span>Sun Illumination System</span>
-          <button
-            onClick={() => setLockSunToCamera(!lockSunToCamera)}
-            className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-              lockSunToCamera
-                ? 'bg-amber-500 text-slate-950'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            {lockSunToCamera ? 'Locked to View' : 'Manual Angle'}
-          </button>
-        </div>
+            <div className="h-4 w-[1px] bg-slate-700 mx-1 hidden lg:block" />
 
-        {/* Sun Azimuth */}
-        <div className={lockSunToCamera ? 'opacity-40 pointer-events-none' : ''}>
-          <div className="flex justify-between mb-0.5">
-            <span className="text-slate-400">Sun Longitude (Azimuth):</span>
-            <span className="font-mono text-amber-300">{sunAzimuth}° E</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="360"
-            step="1"
-            value={sunAzimuth}
-            onChange={(e) => setSunAzimuth(parseInt(e.target.value))}
-            className="w-full accent-amber-500 cursor-pointer"
-          />
-        </div>
-
-        {/* Sun Elevation */}
-        <div className={lockSunToCamera ? 'opacity-40 pointer-events-none' : ''}>
-          <div className="flex justify-between mb-0.5">
-            <span className="text-slate-400">Sun Latitude (Altitude):</span>
-            <span className="font-mono text-amber-300">{sunElevation}°</span>
-          </div>
-          <input
-            type="range"
-            min="-60"
-            max="60"
-            step="1"
-            value={sunElevation}
-            onChange={(e) => setSunElevation(parseInt(e.target.value))}
-            className="w-full accent-amber-500 cursor-pointer"
-          />
-        </div>
-
-        {/* Sun Intensity & Ambient Fill */}
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <div className="flex justify-between mb-0.5 text-[10px]">
-              <span className="text-slate-400">Sunlight:</span>
-              <span className="font-mono text-amber-300">{sunIntensity.toFixed(1)}x</span>
-            </div>
-            <input
-              type="range"
-              min="0.5"
-              max="5.0"
-              step="0.1"
-              value={sunIntensity}
-              onChange={(e) => setSunIntensity(parseFloat(e.target.value))}
-              className="w-full accent-amber-500 cursor-pointer"
-            />
-          </div>
-          <div>
-            <div className="flex justify-between mb-0.5 text-[10px]">
-              <span className="text-slate-400">Sky Fill:</span>
-              <span className="font-mono text-amber-300">{ambientIntensity.toFixed(2)}x</span>
-            </div>
-            <input
-              type="range"
-              min="0.2"
-              max="2.0"
-              step="0.05"
-              value={ambientIntensity}
-              onChange={(e) => setAmbientIntensity(parseFloat(e.target.value))}
-              className="w-full accent-amber-500 cursor-pointer"
-            />
-          </div>
-        </div>
-
-        {/* Camera Pitch / 3D Tilt Angle & Exaggeration */}
-        <div className="pt-2 border-t border-slate-800 space-y-2">
-          <div>
-            <div className="flex justify-between mb-0.5">
-              <span className="text-slate-400">Camera 3D Tilt Angle:</span>
-              <span className="font-mono text-cyan-400">{cameraTiltUI}°</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="65"
-              step="1"
-              value={cameraTiltUI}
-              onChange={(e) => handleTiltChange(parseInt(e.target.value))}
-              className="w-full accent-cyan-500 cursor-pointer"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between mb-0.5">
-              <span className="text-slate-400">3D Elevation Exaggeration:</span>
-              <span className="font-mono text-cyan-400">{exaggeration.toFixed(1)}x</span>
-            </div>
-            <input
-              type="range"
-              min="1.0"
-              max="10.0"
-              step="0.5"
-              value={exaggeration}
-              onChange={(e) => setExaggeration(parseFloat(e.target.value))}
-              className="w-full accent-cyan-500 cursor-pointer"
-            />
-          </div>
-        </div>
-
-        {/* Surface Layer Selector & Extensible Scientific Layer Slots */}
-        <div className="pt-2 border-t border-slate-800 space-y-2">
-          <label className="text-slate-300 text-[11px] block font-medium">
-            Active Base Imagery Layer:
-          </label>
-          <div className="grid grid-cols-3 gap-1 bg-[#06080d] p-1 rounded-lg border border-slate-800">
             <button
-              onClick={() => handleLayerModeChange('realistic')}
-              className={`py-1.5 px-1.5 rounded text-[10px] font-medium transition-all ${
-                layerMode === 'realistic'
-                  ? 'bg-cyan-600 text-white shadow-[0_0_8px_#0891b2]'
-                  : 'text-slate-400 hover:text-slate-200'
+              onClick={() => {
+                setWireframe(false);
+                handleLayerModeChange(layerMode === 'slope_radar' ? 'realistic' : 'slope_radar');
+              }}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border hidden md:inline-block ${
+                layerMode === 'slope_radar'
+                  ? 'bg-emerald-500/25 text-emerald-300 border-emerald-400'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
             >
-              Realistic
+              SLOPE RADAR
             </button>
+
             <button
-              onClick={() => handleLayerModeChange('color_hillshade')}
-              className={`py-1.5 px-1.5 rounded text-[10px] font-medium transition-all ${
-                layerMode === 'color_hillshade'
-                  ? 'bg-cyan-600 text-white shadow-[0_0_8px_#0891b2]'
-                  : 'text-slate-400 hover:text-slate-200'
+              onClick={() => {
+                setWireframe(false);
+                handleLayerModeChange(
+                  layerMode === 'tactical_contour' ? 'realistic' : 'tactical_contour'
+                );
+              }}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border hidden lg:inline-block ${
+                layerMode === 'tactical_contour'
+                  ? 'bg-cyan-500/25 text-cyan-300 border-cyan-400'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
             >
-              Color DEM
+              CONTOURS
             </button>
-            <button
-              onClick={() => handleLayerModeChange('orbital_raw')}
-              className={`py-1.5 px-1.5 rounded text-[10px] font-medium transition-all ${
-                layerMode === 'orbital_raw'
-                  ? 'bg-cyan-600 text-white shadow-[0_0_8px_#0891b2]'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Raw CTX
-            </button>
-          </div>
 
-          {/* Reserved Slot for Future Optional Layers (Thermal, CO2, etc.) */}
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-2 space-y-1">
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="text-slate-400 font-medium">Optional Scientific Overlays:</span>
-              <span className="text-[9px] font-mono text-slate-500">EXTENSIBLE SLOTS</span>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {FUTURE_SCIENTIFIC_LAYERS.map((slot) => (
-                <span
-                  key={slot.id}
-                  className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800/70 text-slate-400 border border-slate-700/60"
-                  title={`NASA Trek Layer: ${slot.trekProductLabel} (Ready for future activation)`}
-                >
-                  {slot.label}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Marker & Visual Toggles */}
-        <div className="space-y-1.5 pt-2 border-t border-slate-800">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-200 font-medium">Show Expedition Site Markers</span>
-            <button
-              onClick={() => setShowSiteMarkers(!showSiteMarkers)}
-              className={`px-2.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                showSiteMarkers
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-              }`}
-            >
-              {showSiteMarkers ? 'ON' : 'OFF'}
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-slate-300">Show Quadtree Tile Borders</span>
-            <button
-              onClick={() => setShowTileBorders(!showTileBorders)}
-              className={`px-2.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                showTileBorders
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-              }`}
-            >
-              {showTileBorders ? 'ON' : 'OFF'}
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-slate-300">3D Mesh Wireframe</span>
             <button
               onClick={() => setWireframe(!wireframe)}
-              className={`px-2.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border hidden lg:inline-block ${
                 wireframe
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                  ? 'bg-amber-500/25 text-amber-300 border-amber-400'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
             >
-              {wireframe ? 'ON' : 'OFF'}
+              WIREFRAME
             </button>
-          </div>
 
-          <div className="flex items-center justify-between">
-            <span className="text-slate-300">Martian Atmosphere Glow</span>
             <button
-              onClick={() => setShowAtmosphere(!showAtmosphere)}
-              className={`px-2.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                showAtmosphere
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+              onClick={() => setShowPanoMarkers((v) => !v)}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border inline-flex items-center gap-1.5 ${
+                showPanoMarkers
+                  ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/80 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
+              }`}
+              title="Toggle 360° Rover Panorama Optic Markers on the surface"
+            >
+              <TacticalOpticIcon
+                className="w-3.5 h-3.5"
+                accentColor={showPanoMarkers ? '#22d3ee' : '#94a3b8'}
+              />
+              <span>360° OPTICS</span>
+            </button>
+
+            <button
+              onClick={() => toggleGlobalCommandView(!isGlobalCommandView)}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border ${
+                isGlobalCommandView
+                  ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
             >
-              {showAtmosphere ? 'ON' : 'OFF'}
+              GLOBAL ORBIT
             </button>
           </div>
-        </div>
-      </div>
 
-      {/* Initial Startup Overlay */}
-      {initialLoading && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#03050a]/90 backdrop-blur-md">
-          <div className="h-10 w-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4" />
-          <p className="text-sm font-medium tracking-widest text-slate-200 uppercase">
-            Initializing Selective-LOD Mars Expedition Globe...
-          </p>
-          <p className="text-xs text-cyan-400 mt-1 font-mono">
-            Origin: Jezero Crater Delta Front (Perseverance Landing Site)...
-          </p>
+          {/* Right: Real-Time Synced Mars Sol & Local Solar Time */}
+          <div className="flex items-center gap-2.5 text-xs font-mono">
+            <div
+              className="hidden 2xl:flex items-center gap-1.5 px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-700/50 text-cyan-300 text-[10px]"
+              title="Real-time Martian Sunset / Freeze Countdown at watched longitude"
+            >
+              <span suppressHydrationWarning>❄ {marsEphemeris.freezeCountdownStr}</span>
+            </div>
+            <div
+              suppressHydrationWarning
+              className="text-slate-200 tracking-wide bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700/70"
+              title={`Mars Sol Date (MSD): ${marsEphemeris.msd.toFixed(2)} | Coordinated Mars Time: ${marsEphemeris.mtcStr}`}
+            >
+              <span suppressHydrationWarning className="text-amber-300 font-bold">
+                {displayedSolMission} {displayedSolNumber}
+              </span>
+              <span className="mx-1.5 text-slate-600">|</span>
+              <span suppressHydrationWarning className="text-cyan-300 font-semibold">
+                {marsEphemeris.localSolarTimeStr}
+              </span>
+            </div>
+          </div>
+        </header>
+
+        {/* ===================================================================
+            MAIN 3-COLUMN TACTICAL COCKPIT BODY
+           =================================================================== */}
+        <div className="relative flex-1 flex overflow-hidden">
+          {/* =================================================================
+              LEFT TACTICAL SIDEBAR
+             ================================================================= */}
+          <aside className="w-70 bg-[#0b101b]/92 border-r border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-1 bg-[#060911] p-1 rounded-lg border border-slate-800">
+                <button
+                  onClick={() => setLeftPanelTab('ROUTE')}
+                  className={`py-1 rounded text-[10px] font-bold tracking-wider uppercase transition-all ${
+                    leftPanelTab === 'ROUTE'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  ROUTE PLANNING
+                </button>
+                <button
+                  onClick={() => setLeftPanelTab('TELEMETRY')}
+                  className={`py-1 rounded text-[10px] font-bold tracking-wider uppercase transition-all ${
+                    leftPanelTab === 'TELEMETRY'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  GYRO / TORQUE
+                </button>
+              </div>
+
+              {leftPanelTab === 'ROUTE' ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                    <span className="text-[11px] font-bold tracking-wider text-slate-200 uppercase">
+                      ROUND-TRIP PLANNER
+                    </span>
+                    {routingEnabled ? (
+                      <button
+                        onClick={() => {
+                          setRoutingEnabled(false);
+                          setPickingMode('NONE');
+                        }}
+                        className="text-[9px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/50 hover:bg-rose-500/30"
+                      >
+                        EXIT ROUTING
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setRoutingEnabled(true)}
+                        className="text-[9px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-500/30"
+                      >
+                        ENABLE ROUTING
+                      </button>
+                    )}
+                  </div>
+
+                  {!routingEnabled ? (
+                    <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-3.5 text-center space-y-2">
+                      <div className="text-xs font-bold text-slate-300">
+                        ROUTING MODE DISABLED
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        All route lines and waypoint markers are hidden for unobstructed terrain inspection.
+                      </p>
+                      <button
+                        onClick={() => setRoutingEnabled(true)}
+                        className="w-full py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400 text-cyan-200 font-mono text-xs font-bold uppercase"
+                      >
+                        START NEW ROUTE
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Outbound + Return Dual Path Legend & Toggle */}
+                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2 space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-slate-300 font-semibold">
+                            Round-Trip Survival Paths:
+                          </span>
+                          <button
+                            onClick={() => setShowReturnLeg(!showReturnLeg)}
+                            className={`font-mono text-[9px] px-1.5 py-0.5 rounded border ${
+                              showReturnLeg
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}
+                          >
+                            {showReturnLeg ? 'A→B & B→A: ON' : 'OUTBOUND ONLY'}
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] font-mono">
+                          <span className="flex items-center gap-1.5 text-cyan-300">
+                            <span className="w-3 h-1 bg-cyan-400 rounded" />
+                            Outbound (A1 → B2)
+                          </span>
+                          <span className="flex items-center gap-1.5 text-amber-300">
+                            <span className="w-3 h-1 bg-amber-400 rounded" />
+                            Return (B2 → A1)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* ORIGIN: START (A1) */}
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">
+                          ORIGIN (A1)
+                        </div>
+                        <button
+                          onClick={() =>
+                            setPickingMode(pickingMode === 'START' ? 'NONE' : 'START')
+                          }
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all ${
+                            pickingMode === 'START'
+                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200 animate-pulse'
+                              : 'bg-[#111827]/90 border-slate-700 hover:border-slate-500'
+                          }`}
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-slate-100">
+                              {pickingMode === 'START' ? 'CLICK GLOBE FOR START...' : 'START'}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400">
+                              {routeEndpoints.startLat.toFixed(3)}°N,{' '}
+                              {routeEndpoints.startLon.toFixed(3)}°E
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/60 text-emerald-300 font-mono text-[10px] font-bold">
+                            A1
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* DESTINATION (B2) */}
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">
+                          DESTINATION (B2)
+                        </div>
+                        <button
+                          onClick={() => setPickingMode(pickingMode === 'END' ? 'NONE' : 'END')}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all ${
+                            pickingMode === 'END'
+                              ? 'bg-rose-500/20 border-rose-400 text-rose-200 animate-pulse'
+                              : 'bg-[#111827]/90 border-slate-700 hover:border-slate-500'
+                          }`}
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-slate-100">
+                              {pickingMode === 'END' ? 'CLICK GLOBE FOR END...' : 'DESTINATION'}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400">
+                              {routeEndpoints.endLat.toFixed(3)}°N,{' '}
+                              {routeEndpoints.endLon.toFixed(3)}°E
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full bg-rose-500/25 border border-rose-400/60 text-rose-300 font-mono text-[10px] font-bold">
+                            B2
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* UNTRAVERSABLE WARNING OR STEP-BY-STEP ROUND-TRIP CARDS */}
+                      {activeRouteData && !activeRouteData.isTraversable ? (
+                        <div className="bg-rose-950/75 border-2 border-rose-500 rounded-xl p-3 space-y-1.5">
+                          <div className="text-xs font-bold text-rose-300 uppercase flex items-center gap-1.5">
+                            <span>⛔</span>
+                            <span>ROUTE UNTRAVERSABLE</span>
+                          </div>
+                          <p className="text-[11px] text-rose-100/90 leading-relaxed">
+                            {activeRouteData.failureReason}
+                          </p>
+                          <div className="text-[10px] font-mono text-rose-300 pt-1">
+                            Select new A1 / B2 points in green/yellow Slope Radar zones.
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="pt-1 space-y-1.5">
+                          <div className="text-[11px] font-semibold text-slate-300">
+                            Outbound (A→B) & Return (B→A) Legs
+                          </div>
+                          {activeRouteData?.segments.map((seg) => {
+                            const isReturn = seg.leg === 'RETURN';
+                            const borderCol = isReturn
+                              ? 'border-l-4 border-l-amber-400 border-slate-700/80'
+                              : 'border-l-4 border-l-cyan-400 border-slate-700/80';
+                            const titleCol = isReturn ? 'text-amber-300' : 'text-cyan-300';
+
+                            return (
+                              <div
+                                key={seg.id}
+                                className={`bg-[#101726]/90 border ${borderCol} rounded-lg p-2 space-y-0.5`}
+                              >
+                                <div className={`text-[11px] font-bold font-mono ${titleCol}`}>
+                                  {seg.title}
+                                </div>
+                                <div className="text-[10px] text-slate-200 font-mono">
+                                  {seg.distKm} km • max slope {seg.maxSlopeDeg}° • friction{' '}
+                                  {seg.frictionMu}μ
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                /* GYRO-INCLINOMETER & ROVER TELEMETRY */
+                <div className="space-y-3">
+                  <div className="text-[11px] font-bold tracking-wider text-slate-200 uppercase border-b border-slate-800 pb-1">
+                    GYRO-INCLINOMETER
+                  </div>
+
+                  <div className="relative flex items-center justify-between px-2 py-1 bg-[#0c1322] rounded-xl border border-slate-800">
+                    <div className="text-center">
+                      <div className="text-[9px] text-slate-400 uppercase">ROLL:</div>
+                      <div className="text-xs font-mono font-bold text-cyan-300 mt-1">
+                        {liveTelemetry.rollDeg >= 0
+                          ? `+${liveTelemetry.rollDeg}°`
+                          : `${liveTelemetry.rollDeg}°`}
+                      </div>
+                    </div>
+
+                    <div className="relative h-24 w-24 rounded-full border-2 border-slate-500 overflow-hidden shadow-inner bg-[#09121e]">
+                      <div
+                        className="w-full h-full transition-transform duration-150"
+                        style={{
+                          transform: `rotate(${-liveTelemetry.rollDeg * 2.5}deg) translateY(${
+                            liveTelemetry.pitchDeg * 1.6
+                          }px)`,
+                        }}
+                      >
+                        <div className="w-full h-1/2 bg-gradient-to-b from-sky-500/80 to-sky-400/50 border-b-2 border-amber-300" />
+                        <div className="w-full h-1/2 bg-gradient-to-b from-amber-700/80 to-amber-950/90" />
+                      </div>
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="w-14 h-[1.5px] bg-white/80" />
+                      </div>
+                    </div>
+
+                    <div className="text-center">
+                      <div className="text-[9px] text-slate-400 uppercase">PITCH:</div>
+                      <div
+                        className={`text-xs font-mono font-bold mt-1 ${
+                          Math.abs(liveTelemetry.pitchDeg) > 15
+                            ? 'text-rose-400'
+                            : 'text-amber-300'
+                        }`}
+                      >
+                        {liveTelemetry.pitchDeg >= 0
+                          ? `+${liveTelemetry.pitchDeg}°`
+                          : `${liveTelemetry.pitchDeg}°`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="relative flex items-center justify-center py-1">
+                    <div className="relative h-24 w-24 rounded-full border border-slate-600 bg-[#080d18] flex flex-col items-center justify-center shadow-inner">
+                      <span className="text-[9px] text-amber-400 font-bold absolute top-1">N</span>
+                      <span className="text-[9px] text-slate-500 font-bold absolute bottom-1">
+                        S
+                      </span>
+                      <span className="text-[9px] text-slate-500 font-bold absolute left-1.5">
+                        W
+                      </span>
+                      <span className="text-[9px] text-slate-500 font-bold absolute right-1.5">
+                        E
+                      </span>
+                      <div className="text-base font-mono font-bold text-slate-100">
+                        {String(liveTelemetry.headingDeg).padStart(3, '0')}°
+                      </div>
+                      <div className="text-[10px] font-mono text-cyan-400">
+                        {liveTelemetry.compassDir}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#0c1322] rounded-xl border border-slate-800 p-2.5 text-center">
+                    <div className="text-xl font-mono font-bold text-amber-300">
+                      {liveTelemetry.speedKmh}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">km/h</div>
+                  </div>
+
+                  <div className="space-y-1 pt-1">
+                    <div className="text-[10px] font-bold tracking-wider text-slate-300 uppercase">
+                      WHEEL TORQUE
+                    </div>
+                    {liveTelemetry.wheelTorques.map((t, idx) => (
+                      <div key={idx} className="flex items-center gap-2 text-[10px] font-mono">
+                        <span className="text-slate-400 w-6">W {idx + 1}</span>
+                        <div className="flex-1 h-2 bg-slate-800 rounded overflow-hidden">
+                          <div
+                            className={`h-full rounded ${
+                              t > 80 ? 'bg-amber-400' : 'bg-amber-500/80'
+                            }`}
+                            style={{ width: `${t}%` }}
+                          />
+                        </div>
+                        <span className="text-slate-300 w-7 text-right">{t}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom of Left Sidebar: 360° Rover Panoramas & Expedition Hubs */}
+            <div className="pt-3 border-t border-slate-800 space-y-2">
+              {(selectedSite.id === 'jezero-delta' || selectedSite.id === 'mount-sharp-gale') && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <TacticalOpticIcon className="w-3.5 h-3.5" accentColor="#22d3ee" />
+                      <span>360° ROVER STREET VIEW</span>
+                    </span>
+                    <span className="text-[9px] font-mono text-cyan-400">
+                      {selectedSite.id === 'jezero-delta' ? 'M20 MASTCAM-Z' : 'MSL MASTCAM'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1">
+                    {ROVER_PANORAMA_STATIONS.filter((st) => st.siteId === selectedSite.id).map(
+                      (st) => {
+                        const isActive = activeStreetViewStation?.id === st.id;
+                        return (
+                          <button
+                            key={st.id}
+                            onClick={() => openRoverStreetView(st)}
+                            title={`${st.code}: ${st.title} (Sol ${st.sol})`}
+                            className={`py-1 px-1 rounded text-[9px] font-mono font-bold flex flex-col items-center justify-center border transition-all ${
+                              isActive
+                                ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                                : 'bg-[#08101c] border-slate-800 text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200'
+                            }`}
+                          >
+                            <TacticalOpticIcon
+                              className="w-3 h-3 mb-0.5"
+                              accentColor={isActive ? '#22d3ee' : '#38bdf8'}
+                            />
+                            <span>{st.code.replace('CAM-', 'C')}</span>
+                          </button>
+                        );
+                      }
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase flex justify-between">
+                  <span>EXPEDITION HUBS (Z12)</span>
+                  <span className="text-cyan-400 font-mono">{liveTelemetry.qualityTierLabel}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {EXPEDITION_SITES.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => flyToExpeditionSite(s)}
+                      className={`px-2 py-1.5 rounded text-[10px] font-medium text-left truncate border transition-all ${
+                        selectedSite.id === s.id
+                          ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/50'
+                          : 'bg-slate-900/70 text-slate-400 border-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      <span
+                        className="inline-block w-1.5 h-1.5 rounded-full mr-1.5"
+                        style={{ backgroundColor: s.color }}
+                      />
+                      {s.shortLabel}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          {/* =================================================================
+              CENTER 3D VIEWPORT + AUTO-HIDING HUD OVERLAYS
+             ================================================================= */}
+          <main className="relative flex-1 h-full overflow-hidden">
+            <div
+              ref={containerRef}
+              className={`w-full h-full ${
+                pickingMode !== 'NONE'
+                  ? 'cursor-crosshair'
+                  : 'cursor-grab active:cursor-grabbing'
+              }`}
+            />
+
+            {/* Top Center Viewport Sub-Header (Fades out if cursor hovers near it while viewing route!) */}
+            <div className="absolute top-3 left-4 right-4 flex flex-wrap items-start justify-between gap-4 pointer-events-none z-10">
+              <div
+                className={`bg-[#090e18]/80 backdrop-blur-md border border-slate-700/70 px-3.5 py-2 rounded-lg transition-opacity duration-200 ${
+                  isCursorNear(150, 40, 130) ? 'opacity-10' : 'opacity-100'
+                }`}
+              >
+                <div className="text-sm md:text-base font-bold tracking-wide text-slate-100 uppercase">
+                  {selectedSite.shortLabel}
+                  <span className="mx-2 text-slate-600">|</span>
+                  <span className="font-mono text-cyan-300 text-xs md:text-sm">
+                    {liveTelemetry.lat >= 0
+                      ? `${liveTelemetry.lat.toFixed(2)}°N`
+                      : `${Math.abs(liveTelemetry.lat).toFixed(2)}°S`}{' '}
+                    {liveTelemetry.lon.toFixed(2)}°E
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wider">
+                  SEAMLESS BICUBIC DEM • MAX ZOOM LEVEL {maxRenderedZoom} ({visibleTileCount} MESHES)
+                </div>
+              </div>
+
+              {/* Round-Trip Progress Bar (A1 -> A2 -> B2 -> R1 -> A1) */}
+              {routingEnabled && activeRouteData && !isGlobalCommandView && (
+                <div
+                  className={`bg-[#090e18]/85 backdrop-blur-md border px-4 py-2 rounded-lg min-w-72 transition-opacity duration-200 ${
+                    activeRouteData.isTraversable
+                      ? 'border-slate-700/70'
+                      : 'border-rose-500/90 bg-rose-950/85'
+                  } ${isCursorNear(480, 40, 130) ? 'opacity-10' : 'opacity-100'}`}
+                >
+                  {activeRouteData.isTraversable ? (
+                    <>
+                      <div className="flex items-center justify-between text-xs font-mono mb-1.5">
+                        <span className="text-cyan-300 font-bold">
+                          A→B: {activeRouteData.outboundDistKm} km | B→A:{' '}
+                          {activeRouteData.returnDistKm} km
+                        </span>
+                        <span className="text-slate-300 ml-3">
+                          ELEV:{' '}
+                          <strong className="text-emerald-300">
+                            {Math.round(liveTelemetry.elevM)} m
+                          </strong>
+                        </span>
+                      </div>
+                      <div className="relative flex items-center justify-between">
+                        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-amber-400/70 rounded" />
+                        <div className="absolute left-0 w-1/2 top-1/2 -translate-y-1/2 h-1 bg-cyan-400 rounded shadow-[0_0_8px_#00f0ff]" />
+                        {['A1', 'A2', 'B2', 'R1', 'A1'].map((lbl, idx) => (
+                          <div key={idx} className="relative z-10 flex flex-col items-center">
+                            <div
+                              className={`w-2.5 h-2.5 rounded-full border ${
+                                idx <= 2
+                                  ? 'bg-cyan-400 border-white'
+                                  : 'bg-amber-400 border-slate-900'
+                              }`}
+                            />
+                            <span className="text-[9px] font-mono text-slate-300 mt-1">{lbl}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-xs font-mono text-rose-200 font-bold flex items-center gap-2">
+                      <span>⛔</span>
+                      <span>
+                        MISSION ABORT: {activeRouteData.failureReason}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Top-Right Viewport Summary Box */}
+              {routingEnabled &&
+                activeRouteData &&
+                activeRouteData.isTraversable &&
+                !isGlobalCommandView && (
+                  <div
+                    className={`bg-[#090e18]/90 backdrop-blur-md border border-slate-700/80 px-3.5 py-2 rounded-lg text-xs font-mono space-y-1 min-w-52 transition-opacity duration-200 ${
+                      isCursorNear(820, 50, 140) ? 'opacity-10' : 'opacity-100'
+                    }`}
+                  >
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-400">ROUND-TRIP TIME:</span>
+                      <span className="text-slate-100 font-bold">
+                        {activeRouteData.estRoundTripTimeMin}m
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-400">ROUND-TRIP DIST:</span>
+                      <span className="text-cyan-300 font-bold">
+                        {activeRouteData.totalRoundTripKm} km
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-400">MAX SAFE SLOPE:</span>
+                      <span className="font-bold text-emerald-300">
+                        {activeRouteData.maxSlopeDeg}°
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-400">ROUND-TRIP ENERGY:</span>
+                      <span className="text-amber-300 font-bold">
+                        {activeRouteData.estEnergyWh} Wh
+                      </span>
+                    </div>
+                  </div>
+                )}
+            </div>
+
+            {/* 3D-Projected Expedition Hub Markers (Auto-hide when cursor is near them while viewing routes!) */}
+            <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+              {projectedMarkers.map(({ site, x, y, visible }) => {
+                if (!visible) return null;
+                const nearMouse = isCursorNear(x, y, 125);
+                const isSelected = selectedSite.id === site.id;
+                return (
+                  <div
+                    key={site.id}
+                    style={{
+                      transform: `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`,
+                    }}
+                    className={`absolute top-0 left-0 -translate-x-1/2 -translate-y-full pb-2 transition-opacity duration-150 ${
+                      nearMouse
+                        ? 'opacity-0 pointer-events-none'
+                        : 'opacity-100 pointer-events-auto'
+                    }`}
+                  >
+                    <button
+                      onClick={() => flyToExpeditionSite(site)}
+                      className={`flex items-center gap-2 px-2.5 py-1 rounded-md backdrop-blur-md border transition-all shadow-lg hover:scale-105 ${
+                        isSelected
+                          ? 'bg-[#081526]/95 border-cyan-400 text-cyan-200 shadow-[0_0_15px_rgba(0,240,255,0.4)]'
+                          : 'bg-[#0b101b]/90 border-amber-500/60 text-slate-200 hover:border-cyan-400'
+                      }`}
+                    >
+                      <span
+                        className="h-2.5 w-2.5 rounded-full animate-pulse"
+                        style={{ backgroundColor: site.color }}
+                      />
+                      <span className="text-[11px] font-bold tracking-wider uppercase whitespace-nowrap">
+                        {site.shortLabel}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 3D-Projected Subtle 360° Rover Panorama Optic Markers */}
+            {showPanoMarkers && !isGlobalCommandView && !activeStreetViewStation && (
+              <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+                {projectedPanoMarkers.map(({ station, x, y, visible }) => {
+                  if (!visible) return null;
+                  const nearMouseWhenRouting =
+                    routingEnabled && isCursorNear(x, y, 75);
+                  return (
+                    <div
+                      key={station.id}
+                      style={{
+                        transform: `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`,
+                      }}
+                      className={`absolute top-0 left-0 -translate-x-1/2 -translate-y-full pb-1.5 transition-opacity duration-150 ${
+                        nearMouseWhenRouting
+                          ? 'opacity-15 pointer-events-none'
+                          : 'opacity-95 pointer-events-auto'
+                      }`}
+                    >
+                      <button
+                        onClick={() => openRoverStreetView(station)}
+                        title={`Enter 360° Rover Street View: ${station.title} (Sol ${station.sol})`}
+                        className="group flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#06101d]/90 hover:bg-[#091b30]/95 backdrop-blur-md border border-cyan-400/55 hover:border-cyan-300 text-cyan-200 shadow-[0_0_12px_rgba(0,240,255,0.22)] hover:shadow-[0_0_16px_rgba(0,240,255,0.45)] transition-all hover:scale-105"
+                      >
+                        <TacticalOpticIcon
+                          className="w-3.5 h-3.5 shrink-0"
+                          accentColor="#22d3ee"
+                        />
+                        <span className="text-[10px] font-mono font-bold tracking-wider uppercase">
+                          {station.code}
+                        </span>
+                        <span className="text-[9px] font-mono text-amber-300/90 border-l border-slate-700 pl-1">
+                          S{station.sol}
+                        </span>
+                        <span className="hidden group-hover:inline-block text-[9px] font-mono text-slate-200 pl-1 max-w-44 truncate">
+                          • {station.title}
+                        </span>
+                      </button>
+                      {/* Subtle vertical targeting stem to exact surface point */}
+                      <div className="mx-auto w-[1px] h-2 bg-cyan-400/60" />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 3D-Projected Waypoints & Hazard Badges (Auto-hide when cursor approaches them!) */}
+            {routingEnabled && !isGlobalCommandView && (
+              <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+                {projectedRouteTags.map((tag) => {
+                  if (!tag.visible) return null;
+                  const nearMouse = isCursorNear(tag.x, tag.y, 110);
+
+                  if (tag.kind === 'HAZARD') {
+                    return (
+                      <div
+                        key={tag.id}
+                        style={{
+                          transform: `translate3d(${Math.round(tag.x)}px, ${Math.round(tag.y)}px, 0)`,
+                        }}
+                        className={`absolute top-0 left-0 -translate-x-1/2 -translate-y-full pb-1 transition-opacity duration-150 ${
+                          nearMouse ? 'opacity-0' : 'opacity-95'
+                        }`}
+                      >
+                        <div className="bg-[#18120b]/90 border border-amber-500/80 px-2 py-0.5 rounded text-[10px] font-mono text-amber-300 shadow-lg flex items-center gap-1.5 whitespace-nowrap">
+                          <span className="text-amber-400 font-bold">⚠</span>
+                          <span>{tag.text}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={tag.id}
+                      style={{
+                        transform: `translate3d(${Math.round(tag.x)}px, ${Math.round(tag.y)}px, 0)`,
+                      }}
+                      className={`absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 flex items-center gap-2 transition-opacity duration-150 ${
+                        nearMouse ? 'opacity-15' : 'opacity-100'
+                      }`}
+                    >
+                      <div
+                        className="h-6 w-6 rounded-full bg-[#091322]/95 border-2 flex items-center justify-center text-[10px] font-mono font-bold text-white shadow-[0_0_10px_rgba(0,240,255,0.45)]"
+                        style={{ borderColor: tag.color }}
+                      >
+                        {tag.text}
+                      </div>
+                      {tag.subtext && !nearMouse && (
+                        <div className="bg-[#091322]/90 border border-cyan-500/60 px-2.5 py-1 rounded text-[10px] font-mono text-cyan-200 whitespace-nowrap shadow-lg hidden sm:block">
+                          <div className="font-bold text-cyan-300">
+                            {traverseMode === 'ROVER_AUTOPILOT'
+                              ? 'ROVER ROUND-TRIP (A→B & B→A)'
+                              : 'ASTRONAUT EVA WALKBACK (A→B & B→A)'}
+                          </div>
+                          <div className="text-[9px] text-slate-300">{tag.subtext}</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Interactive 360° Rover Street View Modal Overlay */}
+            {activeStreetViewStation && (
+              <MarsRoverStreetViewModal
+                station={activeStreetViewStation}
+                allStationsForSite={ROVER_PANORAMA_STATIONS.filter(
+                  (st) => st.siteId === activeStreetViewStation.siteId
+                )}
+                onSelectStation={(st) => openRoverStreetView(st)}
+                onClose={() => setActiveStreetViewStation(null)}
+              />
+            )}
+          </main>
+
+          {/* =================================================================
+              RIGHT TACTICAL SIDEBAR
+             ================================================================= */}
+          <aside className="w-72 bg-[#0b101b]/92 border-l border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
+            <div className="space-y-3">
+              <div className="border-b border-slate-800 pb-1 flex items-center justify-between">
+                <div>
+                  <div className="text-[11px] font-bold tracking-wider text-slate-100 uppercase">
+                    {traverseMode === 'ROVER_AUTOPILOT'
+                      ? 'VEHICLE SAFETY STATUS'
+                      : 'ASTRONAUT M. ELDRIDGE'}
+                  </div>
+                  <div className="text-[9px] text-slate-400 uppercase font-mono">
+                    {traverseMode === 'ROVER_AUTOPILOT'
+                      ? 'HAZARD TELEMETRY & TRACTION'
+                      : 'SUIT BIO-METABOLIC STATUS'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Real-Time Mars Ephemeris & Sun Sync Control */}
+              <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-amber-400 uppercase">
+                    MARS TIME & SUN SYNC
+                  </span>
+                  <button
+                    onClick={() => setSyncRealMarsTime(!syncRealMarsTime)}
+                    className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border ${
+                      syncRealMarsTime
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                    }`}
+                  >
+                    {syncRealMarsTime ? 'LIVE MARS NOW' : 'MANUAL SUN'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1 text-[10px] font-mono text-slate-300">
+                  <div>MSD: {marsEphemeris.msd.toFixed(2)}</div>
+                  <div className="text-right text-cyan-300">{marsEphemeris.mtcStr}</div>
+                  <div>Perseverance: Sol {marsEphemeris.perseveranceSol}</div>
+                  <div className="text-right">Curiosity: Sol {marsEphemeris.curiositySol}</div>
+                </div>
+
+                {!syncRealMarsTime && (
+                  <div className="space-y-1.5 pt-1 border-t border-slate-800">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-400">Manual Sun Lon:</span>
+                      <span className="font-mono text-amber-300">{sunAzimuth}° E</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={sunAzimuth}
+                      onChange={(e) => setSunAzimuth(parseInt(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Traction Grip / O2 Saturation */}
+              <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5">
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase mb-1.5">
+                  <span>
+                    {traverseMode === 'ROVER_AUTOPILOT' ? 'TRACTION GRIP' : 'O2 SATURATION'}
+                  </span>
+                  <span className="text-cyan-400 font-mono">O₂</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 rounded-full border-4 border-amber-400 flex flex-col items-center justify-center shrink-0">
+                    <span className="text-sm font-mono font-bold text-slate-100">
+                      {traverseMode === 'ROVER_AUTOPILOT'
+                        ? liveTelemetry.tractionPct
+                        : liveTelemetry.o2SatPct}
+                    </span>
+                    <span className="text-[8px] font-mono text-slate-400">%</span>
+                  </div>
+                  <svg className="flex-1 h-11 bg-[#080d17] rounded border border-slate-800/80" viewBox="0 0 120 40">
+                    <path
+                      d="M 0 28 L 20 25 L 40 27 L 60 18 L 80 20 L 100 12 L 120 14 L 120 40 L 0 40 Z"
+                      fill="rgba(0, 240, 255, 0.18)"
+                    />
+                    <path
+                      d="M 0 28 L 20 25 L 40 27 L 60 18 L 80 20 L 100 12 L 120 14"
+                      fill="none"
+                      stroke="#00f0ff"
+                      strokeWidth="1.8"
+                    />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Round-Trip Elevation Profile Chart */}
+              {routingEnabled && activeRouteData && activeRouteData.isTraversable && (
+                <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5">
+                  <div className="flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase mb-1">
+                    <span>ROUND-TRIP ELEVATION (A→B→A)</span>
+                    <span className="font-mono text-amber-400">
+                      Δ{' '}
+                      {Math.round(
+                        Math.max(...activeRouteData.profile.map((p) => p.elevM)) -
+                          Math.min(...activeRouteData.profile.map((p) => p.elevM))
+                      )}{' '}
+                      m
+                    </span>
+                  </div>
+                  <svg className="w-full h-14 bg-[#080d17] rounded border border-slate-800/80" viewBox="0 0 160 50">
+                    {(() => {
+                      const prof = activeRouteData.profile;
+                      if (prof.length < 2) return null;
+                      const minE = Math.min(...prof.map((p) => p.elevM));
+                      const maxE = Math.max(minE + 10, ...prof.map((p) => p.elevM));
+                      const pts = prof
+                        .map((p, idx) => {
+                          const x = (idx / (prof.length - 1)) * 160;
+                          const y = 44 - ((p.elevM - minE) / (maxE - minE)) * 36;
+                          return `${x.toFixed(1)},${y.toFixed(1)}`;
+                        })
+                        .join(' ');
+                      return (
+                        <>
+                          <polygon
+                            points={`0,50 ${pts} 160,50`}
+                            fill="rgba(245, 158, 11, 0.22)"
+                          />
+                          <polyline
+                            fill="none"
+                            stroke="#f59e0b"
+                            strokeWidth="2"
+                            points={pts}
+                          />
+                          {/* Midpoint divider line at B2 turnaround */}
+                          <line
+                            x1="80"
+                            y1="0"
+                            x2="80"
+                            y2="50"
+                            stroke="#00f0ff"
+                            strokeDasharray="2,2"
+                            strokeWidth="1"
+                          />
+                        </>
+                      );
+                    })()}
+                  </svg>
+                </div>
+              )}
+
+              {/* Heart Rate / Speed + Radiation Dose */}
+              <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-slate-400 uppercase font-bold">
+                      {traverseMode === 'ROVER_AUTOPILOT' ? 'TRAVERSE SPEED' : 'HEART RATE'}
+                    </div>
+                    <div className="text-lg font-mono font-bold text-slate-100">
+                      {traverseMode === 'ROVER_AUTOPILOT'
+                        ? `${liveTelemetry.speedKmh} km/h`
+                        : `${liveTelemetry.heartRateBpm} BPM`}
+                    </div>
+                  </div>
+                  <svg className="w-24 h-9" viewBox="0 0 100 36">
+                    <polyline
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth="1.8"
+                      points="0,18 20,18 26,8 32,29 38,4 44,32 50,14 56,22 64,18 100,18"
+                    />
+                  </svg>
+                </div>
+
+                <div className="pt-1.5 border-t border-slate-800/80">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-400 uppercase font-bold">
+                      {traverseMode === 'ROVER_AUTOPILOT' ? 'ROVER POWER' : 'RADIATION DOSE'}
+                    </span>
+                    <span className="font-mono text-amber-300 font-bold">
+                      {traverseMode === 'ROVER_AUTOPILOT'
+                        ? '88%'
+                        : `${liveTelemetry.radiationMsvH} mSv/h`}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-16 gap-0.5 mt-1">
+                    {Array.from({ length: 16 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`h-2 rounded-xs ${
+                          i < 10 ? 'bg-amber-400' : 'bg-slate-800'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Environment Telemetry */}
+              <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-1 text-[11px] font-mono">
+                <div className="text-[10px] font-sans font-bold text-slate-300 uppercase mb-1">
+                  ENVIRONMENT
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">EXTERNAL TEMP</span>
+                  <span className="text-slate-100 font-bold">
+                    {liveTelemetry.externalTempC}°C
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">ATMOS. PRES</span>
+                  <span className="text-slate-100 font-bold">
+                    {liveTelemetry.atmosPresPa} Pa
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">SURFACE FRICTION</span>
+                  <span className="text-cyan-300 font-bold">{liveTelemetry.frictionMu} μ</span>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
-      )}
+
+        {/* ===================================================================
+            BOTTOM COCKPIT STATUS BAR
+           =================================================================== */}
+        <footer className="h-8 bg-[#0b101b]/95 border-t border-slate-700/80 px-4 flex items-center justify-between text-[11px] font-mono z-20 shrink-0">
+          <div className="flex items-center gap-4">
+            <span>
+              STATUS:{' '}
+              <strong
+                className={
+                  routingEnabled && activeRouteData && !activeRouteData.isTraversable
+                    ? 'text-rose-400'
+                    : 'text-emerald-400'
+                }
+              >
+                {routingEnabled && activeRouteData && !activeRouteData.isTraversable
+                  ? 'ROUTE BLOCKED (HAZARD)'
+                  : streamingCount > 0
+                  ? `STREAMING (${streamingCount})`
+                  : 'NOMINAL'}
+              </strong>
+            </span>
+            <span className="text-slate-600">|</span>
+            <span>
+              RADAR:{' '}
+              <strong className="text-cyan-300">
+                {layerMode === 'slope_radar' ? 'SLOPE-ACTIVE' : 'ACTIVE'}
+              </strong>
+            </span>
+            <span className="text-slate-600">|</span>
+            <span>
+              MARS EPHEMERIS:{' '}
+              <strong className="text-emerald-400">
+                {syncRealMarsTime ? 'LIVE REAL-TIME SYNC' : 'MANUAL OVERRIDE'}
+              </strong>
+            </span>
+          </div>
+
+          <div className="hidden md:flex items-center gap-4 text-slate-400">
+            <span>
+              HOVER OVER MAP BADGES TO AUTO-HIDE • CLICK{' '}
+              <strong className="text-rose-300">✕ EXIT ROUTE</strong> FOR CLEAN MAP
+            </span>
+          </div>
+        </footer>
+
+        {initialLoading && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#03050a]/90 backdrop-blur-md">
+            <div className="h-10 w-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4" />
+            <p className="text-sm font-bold tracking-widest text-slate-200 uppercase">
+              INITIALIZING ARES-NAVIGATOR TACTICAL COMMAND...
+            </p>
+            <p className="text-xs text-cyan-400 mt-1 font-mono">
+              Syncing Real-Time Mars Ephemeris & Seamless Bicubic DEM...
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
