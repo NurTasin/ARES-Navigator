@@ -49,7 +49,7 @@ export interface ExpeditionSite {
   code: string;
   name: string;
   shortLabel: string;
-  role: 'PRIMARY LANDING SITE' | 'SECONDARY EXPEDITION HUB';
+  role: 'PRIMARY LANDING SITE' | 'SECONDARY EXPEDITION HUB' | 'PRIMARY CHALLENGE TARGET';
   subtitle: string;
   lat: number;
   lon: number;
@@ -102,8 +102,8 @@ const EXPEDITION_SITES: ExpeditionSite[] = [
     code: 'Y',
     name: 'Mount Sharp (Gale Crater)',
     shortLabel: 'Mount Sharp',
-    role: 'SECONDARY EXPEDITION HUB',
-    subtitle: 'Aeolis Mons 5.5 km Sedimentary Peak & Curiosity Hub',
+    role: 'PRIMARY CHALLENGE TARGET',
+    subtitle: 'Curiosity 2025 Boxwork Formations & Aeolis Mons Mound',
     lat: -4.72,
     lon: 137.48,
     elevation: '-4,500 m to +1,000 m',
@@ -112,12 +112,12 @@ const EXPEDITION_SITES: ExpeditionSite[] = [
     maxZoom: 12,
     qualityBadge: 'HIGH-DETAIL Z12 • 6m CTX + 16-bit DEM',
     description:
-      'Secondary expedition hub inside the 154 km Gale Crater basin surrounding Aeolis Mons (Mount Sharp), streaming block-adjusted 6m MRO CTX imagery and 16-bit elevation.',
+      'Featured NASA Challenge Science Target: Gale Crater basin and Mount Sharp boxwork formations studied by Curiosity in 2025. Streams 6m MRO CTX imagery, CRISM mineralogy, and 16-bit DEM.',
     color: '#10b981',
     roiBbox: [135.18, -6.58, 139.25, -2.8],
     ctxLayer: 'Gale_CTX_BlockAdj_dd',
     ctxBbox: [135.1842, -6.5733, 139.2413, -2.8078],
-    defaultRoute: [-4.58, 137.38, -4.78, 137.56],
+    defaultRoute: [-4.685, 137.408, -4.732, 137.395],
   },
   {
     id: 'arcadia-planitia',
@@ -2529,6 +2529,9 @@ export default function MarsGlobeViewer() {
   const [searchResults, setSearchResults] = useState<MarsLandmark[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
 
+  // NASA Space Apps Challenge 2026 Directive & Mission Brief Modal
+  const [showChallengeModal, setShowChallengeModal] = useState<boolean>(false);
+
   // Live Telemetry & Inclinometer State
   const [maxRenderedZoom, setMaxRenderedZoom] = useState<number>(0);
   const [visibleTileCount, setVisibleTileCount] = useState<number>(2);
@@ -2688,26 +2691,30 @@ export default function MarsGlobeViewer() {
       if (!showWalkbackIsochrone || !isochrone || !routingEnabled) return;
 
       const pts3D = isochrone.safeBoundaryPoints.map((p) => {
-        const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + 0.008;
+        const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + 0.00022;
         return latLonToVector3(p.lat, p.lon, rad);
       });
       if (pts3D.length < 3) return;
       pts3D.push(pts3D[0].clone()); // Close polygon loop
 
       const curve = new THREE.CatmullRomCurve3(pts3D, true);
-      const tubeGeom = new THREE.TubeGeometry(curve, 180, 0.004, 8, true);
+      // Earth human-scale running boundary line (~7.5m trail corridor)
+      const tubeGeom = new THREE.TubeGeometry(curve, 180, 0.00022, 6, true);
       const tubeMat = new THREE.MeshBasicMaterial({
         color: 0x38bdf8,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.9,
+        polygonOffset: true,
+        polygonOffsetFactor: -1.0,
+        polygonOffsetUnits: -4.0,
       });
       group.add(new THREE.Mesh(tubeGeom, tubeMat));
 
-      const glowGeom = new THREE.TubeGeometry(curve, 120, 0.012, 8, true);
+      const glowGeom = new THREE.TubeGeometry(curve, 120, 0.00048, 6, true);
       const glowMat = new THREE.MeshBasicMaterial({
         color: 0x0284c7,
         transparent: true,
-        opacity: 0.28,
+        opacity: 0.25,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
@@ -2732,25 +2739,29 @@ export default function MarsGlobeViewer() {
 
     const haven = report.bestHaven;
     const routePts = haven.evacRoute.map((p) => {
-      const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + 0.012;
+      const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + 0.00024;
       return latLonToVector3(p.lat, p.lon, rad);
     });
 
     if (routePts.length >= 2) {
       const curve = new THREE.CatmullRomCurve3(routePts);
-      const tubeGeom = new THREE.TubeGeometry(curve, 80, 0.007, 8, false);
+      // Earth-scale emergency sprint corridor (~8.5m trail width)
+      const tubeGeom = new THREE.TubeGeometry(curve, 80, 0.00025, 6, false);
       const tubeMat = new THREE.MeshBasicMaterial({
         color: 0xf43f5e,
         transparent: true,
         opacity: 0.95,
+        polygonOffset: true,
+        polygonOffsetFactor: -1.0,
+        polygonOffsetUnits: -4.0,
       });
       group.add(new THREE.Mesh(tubeGeom, tubeMat));
 
-      const glowGeom = new THREE.TubeGeometry(curve, 60, 0.018, 8, false);
+      const glowGeom = new THREE.TubeGeometry(curve, 60, 0.00055, 6, false);
       const glowMat = new THREE.MeshBasicMaterial({
         color: 0xff0055,
         transparent: true,
-        opacity: 0.45,
+        opacity: 0.35,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
@@ -2758,26 +2769,28 @@ export default function MarsGlobeViewer() {
     }
 
     const havenRad =
-      elevationMetersToRadius(haven.elevM, paramsRef.current.exaggeration) + 0.02;
+      elevationMetersToRadius(haven.elevM, paramsRef.current.exaggeration) + 0.00028;
     const havenPos = latLonToVector3(haven.lat, haven.lon, havenRad);
 
-    const beaconGeom = new THREE.CylinderGeometry(0.015, 0.005, 0.5, 16);
-    beaconGeom.rotateX(Math.PI / 2);
+    const normal = havenPos.clone().normalize();
+    const beaconGeom = new THREE.CylinderGeometry(0.00015, 0.00045, 0.008, 12);
+    beaconGeom.translate(0, 0.004, 0);
     const beaconMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
     const beaconMesh = new THREE.Mesh(beaconGeom, beaconMat);
     beaconMesh.position.copy(havenPos);
-    beaconMesh.lookAt(new THREE.Vector3(0, 0, 0));
+    beaconMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
     group.add(beaconMesh);
 
-    const domeGeom = new THREE.SphereGeometry(0.04, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const domeGeom = new THREE.SphereGeometry(0.002, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
     const domeMat = new THREE.MeshBasicMaterial({
       color: 0x10b981,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.45,
       wireframe: true,
     });
     const domeMesh = new THREE.Mesh(domeGeom, domeMat);
     domeMesh.position.copy(havenPos);
+    domeMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
     group.add(domeMesh);
   }, []);
 
@@ -2869,33 +2882,36 @@ export default function MarsGlobeViewer() {
     );
     setActiveRouteData(routeData);
 
-    const endpointRadius = Math.max(
-      0.008,
-      Math.min(
-        0.045,
-        (surfaceDistanceKm(
-          routeEndpoints.startLat,
-          routeEndpoints.startLon,
-          routeEndpoints.endLat,
-          routeEndpoints.endLon
-        ) /
-          MARS_RADIUS_KM) *
-          GLOBE_RADIUS *
-          0.025
-      )
-    );
-
     // Always place Origin (A1) & Destination (B2) endpoint markers on the 3D terrain
     const placeEndpointPin = (lat: number, lon: number, colorHex: number) => {
       const elev = terrainField.getElevationMeters(lat, lon);
-      const rad = elevationMetersToRadius(elev, paramsRef.current.exaggeration) + 0.015;
+      const rad = elevationMetersToRadius(elev, paramsRef.current.exaggeration) + 0.00022;
       const pos = latLonToVector3(lat, lon, rad);
+      
+      // Ground base tactical dot
       const pin = new THREE.Mesh(
-        new THREE.SphereGeometry(endpointRadius * 1.4, 16, 16),
+        new THREE.SphereGeometry(0.0009, 16, 16),
         new THREE.MeshBasicMaterial({ color: colorHex })
       );
       pin.position.copy(pos);
       routeGroup.add(pin);
+
+      // Slender vertical holographic laser beacon beam
+      const normal = pos.clone().normalize();
+      const beamGeom = new THREE.CylinderGeometry(0.00008, 0.00028, 0.007, 8);
+      beamGeom.translate(0, 0.0035, 0);
+      const beamMesh = new THREE.Mesh(
+        beamGeom,
+        new THREE.MeshBasicMaterial({
+          color: colorHex,
+          transparent: true,
+          opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+        })
+      );
+      beamMesh.position.copy(pos);
+      beamMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+      routeGroup.add(beamMesh);
     };
 
     placeEndpointPin(routeEndpoints.startLat, routeEndpoints.startLon, 0x10b981);
@@ -2904,11 +2920,17 @@ export default function MarsGlobeViewer() {
     // If the route is UNTRAVERSABLE, do NOT draw a fake route line through dangerous terrain!
     if (!routeData.isTraversable) return;
 
+    // Earth-scale running route geometry (human singletrack trail vs rover transit corridor)
+    const isHike = traverseMode === 'ASTRONAUT_HIKE';
+    // Human running trail corridor (~8.5m wide) vs Rover track corridor (~14m wide)
+    const tubeR = isHike ? 0.00025 : 0.00042;
+    const legOffset = 0.00018; // Ground hugging (~6m above terrain surface, eliminates sky floating)
+
     const buildLegTube = (
       pts: typeof routeData.outboundPoints,
       colorHex: number,
       radiusOffset: number,
-      tubeR: number
+      radiusWidth: number
     ) => {
       if (pts.length < 2) return;
       const pts3D = pts.map((p) => {
@@ -2919,43 +2941,44 @@ export default function MarsGlobeViewer() {
       const curve = new THREE.CatmullRomCurve3(pts3D);
       const tubeGeom = new THREE.TubeGeometry(
         curve,
-        Math.min(180, pts3D.length * 3),
-        tubeR,
-        8,
+        Math.min(240, pts3D.length * 4),
+        radiusWidth,
+        6,
         false
       );
       const tubeMat = new THREE.MeshBasicMaterial({
         color: colorHex,
         transparent: true,
         opacity: 0.95,
+        polygonOffset: true,
+        polygonOffsetFactor: -1.0,
+        polygonOffsetUnits: -4.0,
       });
       routeGroup.add(new THREE.Mesh(tubeGeom, tubeMat));
 
       const glowGeom = new THREE.TubeGeometry(
         curve,
-        Math.min(120, pts3D.length * 2),
-        tubeR * 2.2,
-        8,
+        Math.min(160, pts3D.length * 3),
+        radiusWidth * 1.65,
+        6,
         false
       );
       const glowMat = new THREE.MeshBasicMaterial({
         color: colorHex,
         transparent: true,
-        opacity: 0.22,
+        opacity: 0.25,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
       routeGroup.add(new THREE.Mesh(glowGeom, glowMat));
     };
 
-    const tubeR = Math.max(0.002, endpointRadius * 0.36);
-
-    // Outbound Leg (A1 -> B2): Cyan
-    buildLegTube(routeData.outboundPoints, 0x00f0ff, 0.012, tubeR);
+    // Outbound Leg (A1 -> B2): Cyan (Earth running path scale)
+    buildLegTube(routeData.outboundPoints, 0x00f0ff, legOffset, tubeR);
 
     // Safe Return / Walkback Leg (B2 -> A1): Amber/Gold
     if (showReturnLeg) {
-      buildLegTube(routeData.returnPoints, 0xf59e0b, 0.015, tubeR * 0.9);
+      buildLegTube(routeData.returnPoints, 0xf59e0b, legOffset + 0.00005, tubeR * 0.88);
     }
 
     // ALGORITHM 2: Dynamic Walkback Isochrone Generator (NASA EVA Rule of Half)
@@ -3193,6 +3216,33 @@ export default function MarsGlobeViewer() {
       endLat: site.defaultRoute[2],
       endLon: site.defaultRoute[3],
     });
+  }, []);
+
+  // Quick Action: Fly directly to Curiosity's 2025 Mount Sharp Boxwork Formations (NASA Challenge Science Goal)
+  const flyToBoxworkObjective = useCallback(() => {
+    const galeSite = EXPEDITION_SITES.find((s) => s.id === 'mount-sharp-gale');
+    if (!galeSite) return;
+    setSelectedSite(galeSite);
+    setIsGlobalCommandView(false);
+    setActiveStreetViewStation(null);
+    terrainFieldRef.current?.ensureSiteMasterDemLoaded(galeSite);
+
+    const nav = navStateRef.current;
+    nav.targetLat = -4.732;
+    nav.targetLon = 137.395;
+    nav.targetAltitude = (24 / MARS_RADIUS_KM) * GLOBE_RADIUS;
+    nav.targetTiltDeg = 45;
+    nav.targetBearingDeg = 35;
+
+    setRoutingEnabled(true);
+    setTraverseMode('ASTRONAUT_HIKE');
+    setRouteEndpoints({
+      startLat: -4.685,
+      startLon: 137.408,
+      endLat: -4.732,
+      endLon: 137.395,
+    });
+    setShowChallengeModal(false);
   }, []);
 
   const openRoverStreetView = useCallback((station: RoverPanoramaStation) => {
@@ -4055,7 +4105,7 @@ export default function MarsGlobeViewer() {
         const panoList: { station: RoverPanoramaStation; x: number; y: number; visible: boolean }[] =
           [];
         for (const st of ROVER_PANORAMA_STATIONS) {
-          const { x, y, visible } = projectLatLon(st.lat, st.lon, 0.018);
+          const { x, y, visible } = projectLatLon(st.lat, st.lon, 0.0035);
           panoList.push({ station: st, x, y, visible });
         }
         setProjectedPanoMarkers(panoList);
@@ -4074,7 +4124,7 @@ export default function MarsGlobeViewer() {
       if (activeRouteData.isTraversable) {
         for (const wp of activeRouteData.waypoints) {
           if (wp.id === 'R1' && !showReturnLeg) continue;
-          const { x, y, visible } = projectLatLon(wp.lat, wp.lon, 0.02);
+          const { x, y, visible } = projectLatLon(wp.lat, wp.lon, 0.0022);
           tags.push({
             id: `wp-${wp.id}`,
             text: wp.label,
@@ -4091,8 +4141,8 @@ export default function MarsGlobeViewer() {
         }
       } else {
         // Show A1 and B2 pins even when route is untraversable
-        const pA = projectLatLon(routeEndpoints.startLat, routeEndpoints.startLon, 0.02);
-        const pB = projectLatLon(routeEndpoints.endLat, routeEndpoints.endLon, 0.02);
+        const pA = projectLatLon(routeEndpoints.startLat, routeEndpoints.startLon, 0.0022);
+        const pB = projectLatLon(routeEndpoints.endLat, routeEndpoints.endLon, 0.0022);
         tags.push({
           id: 'wp-A1',
           text: 'A1',
@@ -4114,7 +4164,7 @@ export default function MarsGlobeViewer() {
       }
 
       for (const haz of activeRouteData.hazardPoints) {
-        const { x, y, visible } = projectLatLon(haz.lat, haz.lon, 0.025);
+        const { x, y, visible } = projectLatLon(haz.lat, haz.lon, 0.0028);
         tags.push({
           id: haz.id,
           text: haz.label,
@@ -4240,6 +4290,16 @@ export default function MarsGlobeViewer() {
 
           {/* Center: Mode Switcher + FR-07 SPE Haven + FR-09 RF Comms + Layer Buttons */}
           <div className="flex items-center gap-1.5">
+            {/* NASA Space Apps Challenge 2026 Directive Trigger */}
+            <button
+              onClick={() => setShowChallengeModal(true)}
+              className="px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border cursor-pointer bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 hover:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)] flex items-center gap-1.5"
+              title="Official NASA Space Apps Challenge Statement & Multi-Mission Science Directives"
+            >
+              <span>🛰️</span>
+              <span className="hidden sm:inline">NASA DIRECTIVE</span>
+            </button>
+
             <button
               onClick={() => {
                 setRoutingEnabled(true);
@@ -5117,6 +5177,181 @@ export default function MarsGlobeViewer() {
                 onSelectStation={(st) => openRoverStreetView(st)}
                 onClose={() => setActiveStreetViewStation(null)}
               />
+            )}
+
+            {/* NASA Space Apps Challenge 2026 Directive & Mission Brief Modal */}
+            {showChallengeModal && (
+              <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+                <div className="bg-[#0b101b] border border-cyan-500/40 rounded-2xl max-w-3xl w-full p-6 text-slate-200 shadow-[0_0_50px_rgba(0,240,255,0.2)] max-h-[90vh] overflow-y-auto space-y-5">
+                  {/* Header */}
+                  <div className="flex items-start justify-between border-b border-slate-800 pb-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                          NASA SPACE APPS 2026
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                          OFFICIAL DIRECTIVE
+                        </span>
+                      </div>
+                      <h2 className="text-xl font-bold text-white tracking-wide">
+                        ARES-NAVIGATOR: MARSWALK MISSION PLANNING
+                      </h2>
+                      <p className="text-xs text-slate-400">
+                        Layered Multi-Mission Surface Exploration, Bio-Terramechanics &amp; Radiation Evacuation
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowChallengeModal(false)}
+                      className="text-slate-400 hover:text-white px-2.5 py-1 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-sm font-mono transition-all cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Challenge Statement Box */}
+                  <div className="bg-[#0e1626] border border-slate-800 rounded-xl p-3.5 space-y-2">
+                    <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                      <span>🎯</span>
+                      <span>CHALLENGE OBJECTIVE</span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed italic">
+                      &quot;Create a layered, integrated view of a location or route on the Martian surface that pulls together data from multiple NASA science missions and could help a human explorer plan and carry out a successful Marswalk while conducting new and exciting science along the way.&quot;
+                    </p>
+                  </div>
+
+                  {/* Featured 2025 Science Goal: Mount Sharp Boxwork Formations */}
+                  <div className="bg-gradient-to-r from-emerald-950/40 to-cyan-950/30 border border-emerald-500/40 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-2 font-mono">
+                        <span>🔬</span>
+                        <span>FEATURED SCIENCE GOAL: CURIOSITY 2025 BOXWORK FORMATIONS</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        100/100 SCIENCE VALUE
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Studied extensively by NASA’s Curiosity rover in 2025, the Mount Sharp boxwork formations represent mineral-cemented polygonal fracture networks formed by ancient deep groundwater circulation. As the surrounding bedrock eroded over billions of years, durable sulfate-rich ridges were left standing. Astronauts will execute a Marswalk to sample these ridges and map ancient habitability.
+                    </p>
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] font-mono text-slate-400">
+                        Coordinates: <strong className="text-slate-200">4.732°S, 137.395°E</strong> • Relief: <strong className="text-slate-200">-4,010 m</strong>
+                      </span>
+                      <button
+                        onClick={flyToBoxworkObjective}
+                        className="px-3 py-1.5 rounded-lg text-xs font-mono font-bold uppercase bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 hover:brightness-110 transition-all shadow-[0_0_15px_rgba(16,185,129,0.35)] cursor-pointer flex items-center gap-1.5"
+                      >
+                        <span>🚀</span>
+                        <span>FLY TO 2025 BOXWORK FORMATIONS</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 6 Integrated Multi-Mission NASA Datasets */}
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold text-cyan-300 uppercase tracking-wider font-mono">
+                      FUSED NASA SCIENCE MISSIONS &amp; DATA LAYERS (6 STREAMS)
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
+                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                          <span className="text-cyan-400">1. TOPOGRAPHIC:</span>
+                          <span>MOLA + HRSC / HiRISE DEM</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Continuous 16-bit elevation with sub-10m resolution, multi-tier bicubic interpolation, and real-time slope calculations.
+                        </p>
+                      </div>
+
+                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
+                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                          <span className="text-cyan-400">2. OPTICAL &amp; POV:</span>
+                          <span>Viking + CTX + Mastcam-Z 360°</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Viking MDIM 2.1 global color, 6m MRO CTX orthomosaics, and clickable 360° surface panoramas for ground-truth visualization.
+                        </p>
+                      </div>
+
+                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
+                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                          <span className="text-cyan-400">3. THERMAL &amp; FRICTION:</span>
+                          <span>Mars Odyssey THEMIS</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Thermal inertia derived regolith friction coefficients (μ = 0.30 to 0.78), identifying loose sand slip hazards.
+                        </p>
+                      </div>
+
+                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
+                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                          <span className="text-cyan-400">4. SPECTRAL MINERALOGY:</span>
+                          <span>MRO CRISM Astrobiology</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Astrobiological scoring based on smectite clays, magnesium carbonates, phyllosilicates, and sulfate mineral veins.
+                        </p>
+                      </div>
+
+                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
+                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                          <span className="text-cyan-400">5. ATMOSPHERIC:</span>
+                          <span>Curiosity REMS + MEDA</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Live atmospheric pressure (610-850 Pa), diurnal ground/air temperatures, wind speed, and dust opacity (tau).
+                        </p>
+                      </div>
+
+                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
+                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
+                          <span className="text-cyan-400">6. RADIATION &amp; WEATHER:</span>
+                          <span>Curiosity RAD + FR-07 HAVEN</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Galactic Cosmic Ray dosimetry (~240 μSv/day), Solar Particle Event (SPE) alert, and 3D cliff shadow evacuation routing.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Astronaut Safety & Human Running Scale */}
+                  <div className="bg-[#0e1626] border border-slate-800 rounded-xl p-3.5 space-y-2">
+                    <div className="text-[11px] font-bold text-rose-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                      <span>🛡️</span>
+                      <span>ASTRONAUT SAFETY &amp; BIO-TERRAMECHANICS PROTOCOLS</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-slate-300 font-mono">
+                      <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+                        <span className="text-cyan-400 block font-bold">SANTEE-PANDOLF (0.38g)</span>
+                        Metabolic watts, 25kg tool payload, 45W suit resistance.
+                      </div>
+                      <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+                        <span className="text-amber-400 block font-bold">PLSS TRI-EXPENDABLES</span>
+                        Sublimator water, O2 burn, LiOH scrubber saturation.
+                      </div>
+                      <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+                        <span className="text-emerald-400 block font-bold">NASA RULE OF HALF</span>
+                        50% safe turn-around boundary with 3D walkback isochrone.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                    <span className="text-[10px] font-mono text-slate-400">
+                      TRAVERSE SCALING: Earth-scale running trails (~8m corridor) hugging 3D micro-topography.
+                    </span>
+                    <button
+                      onClick={() => setShowChallengeModal(false)}
+                      className="px-4 py-1.5 rounded-lg text-xs font-mono font-bold uppercase bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-all cursor-pointer"
+                    >
+                      RETURN TO EXPLORATION
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
           </main>
 
