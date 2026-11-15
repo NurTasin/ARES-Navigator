@@ -8,6 +8,27 @@ import {
   TacticalOpticIcon,
   MarsRoverStreetViewModal,
 } from './MarsRoverStreetViewModal';
+import {
+  computeSanteePandolf038g,
+  computeWalkbackIsochrone,
+  type BioMetabolicExpenditure,
+  type WalkbackIsochroneBoundary,
+} from './algorithms/bioTerramechanics';
+import {
+  computeRadHavenSpe,
+  type SpeHavenReport,
+  type SpeHavenCandidate,
+} from './algorithms/radHavenSpe';
+import {
+  computeRfCommsStatus,
+  type RfCommsReport,
+} from './algorithms/rfComms';
+import {
+  MARS_LANDMARKS,
+  searchMarsLandmarks,
+  parseCoordinateQuery,
+  type MarsLandmark,
+} from './data/marsLandmarks';
 
 // ============================================================================
 // CONSTANTS & PLANETARY GEOMETRY
@@ -21,7 +42,7 @@ const MAX_GLOBAL_ZOOM = 5;
 
 const TILE_SEGMENTS = 48; // 48x48 grid per tile
 const DEM_GRID_SIZE = TILE_SEGMENTS + 1; // 49x49 vertices per tile
-const MAX_CONCURRENT_DOWNLOADS = 6;
+const MAX_CONCURRENT_DOWNLOADS = 10; // Optimized for high-throughput HTTP/2 tile streaming
 
 export interface ExpeditionSite {
   id: string;
@@ -187,6 +208,11 @@ export interface RouteProfileSample {
   slipRiskPct: number;
   metabolicWatts: number;
   leg: 'OUTBOUND' | 'RETURN';
+  velocityMs?: number;
+  waterBurnRateGph?: number;
+  cumWaterBurnG?: number;
+  cumO2BurnG?: number;
+  soilClass?: 'A (ROCK)' | 'B (SAND)' | 'C (DUST TRAP)';
 }
 
 export interface ComputedRoundTripRoute {
@@ -206,6 +232,12 @@ export interface ComputedRoundTripRoute {
   avgFrictionMu: number;
   estEnergyWh: number;
   hazardPoints: { id: string; label: string; lat: number; lon: number; elevM: number; slopeDeg: number }[];
+  totalWaterBurnGrams?: number;
+  totalO2BurnGrams?: number;
+  maxMetabolicWatts?: number;
+  avgMetabolicWatts?: number;
+  ruleOfHalfCompliant?: boolean;
+  waterReserveMarginPct?: number;
 }
 
 export interface ProjectedMarkerPos {
@@ -311,11 +343,14 @@ export interface RealMarsEphemeris {
   isDaylightAtFocus: boolean;
   subsolarLat: number; // Real-time subsolar latitude on Mars right now
   subsolarLon: number; // Real-time subsolar east longitude on Mars right now
+  solarZenithDeg?: number;
+  solarAzimuthDeg?: number;
 }
 
 function computeRealMarsTimeAndSun(
   focusLonEast: number,
-  nowMs: number = Date.now()
+  focusLat: number = 0,
+  nowMs: number = 1763148000000
 ): RealMarsEphemeris {
   const jdUT = 2440587.5 + nowMs / 86400000.0;
   const jdTT = jdUT + 69.184 / 86400.0;
@@ -351,12 +386,26 @@ function computeRealMarsTimeAndSun(
   const mtcHours = (((msd % 1.0) + 1.0) % 1.0) * 24.0;
 
   // 5. Subsolar Latitude (declination) & Subsolar East Longitude on Mars right now
+  // Corrected astronomical formula: subsolar East lon = 180° - 15° * MTC + EOT
   const obliquityRad = (25.1919 * Math.PI) / 180.0;
   const subsolarLat = (Math.asin(Math.sin(obliquityRad) * Math.sin(LsRad)) * 180.0) / Math.PI;
-  const subsolarLon = normalizeLon(-(mtcHours * 15.0 - 180.0 + eotDeg));
+  const subsolarLon = normalizeLon(180.0 - mtcHours * 15.0 + eotDeg);
 
   // 6. Local True Solar Time (LTST) at watched longitude
   const localHourFloat = ((mtcHours + focusLonEast / 15.0 + eotDeg / 15.0) % 24.0 + 24.0) % 24.0;
+
+  // 7. Solar Zenith & Azimuth at Focus Location
+  const latRad = (focusLat * Math.PI) / 180.0;
+  const sLatRad = (subsolarLat * Math.PI) / 180.0;
+  const dLonRad = (normalizeLon(subsolarLon - focusLonEast) * Math.PI) / 180.0;
+  const sinElev =
+    Math.sin(latRad) * Math.sin(sLatRad) +
+    Math.cos(latRad) * Math.cos(sLatRad) * Math.cos(dLonRad);
+  const solarZenithDeg = Math.acos(Math.max(-1, Math.min(1, sinElev))) * (180.0 / Math.PI);
+  const cosElev = Math.max(0.01, Math.cos((90.0 - solarZenithDeg) * (Math.PI / 180.0)));
+  const sinAz = (Math.cos(sLatRad) * Math.sin(dLonRad)) / cosElev;
+  const cosAz = (Math.sin(sLatRad) - Math.sin(latRad) * sinElev) / (Math.cos(latRad) * cosElev);
+  const solarAzimuthDeg = (Math.atan2(sinAz, cosAz) * (180.0 / Math.PI) + 360.0) % 360.0;
 
   const formatHMS = (hFloat: number) => {
     const hh = Math.floor(hFloat);
@@ -391,6 +440,8 @@ function computeRealMarsTimeAndSun(
     isDaylightAtFocus,
     subsolarLat,
     subsolarLon,
+    solarZenithDeg: Number(solarZenithDeg.toFixed(1)),
+    solarAzimuthDeg: Number(solarAzimuthDeg.toFixed(1)),
   };
 }
 
@@ -410,7 +461,7 @@ function computeRealMarsTimeAndSun(
  *  3) Catmull-Rom Bicubic Interpolation (`sampleBicubic`) so BOTH elevation z(lat, lon)
  *     and slope theta(lat, lon) are 100% C1-continuous across every tile boundary on Mars!
  */
-class UnifiedMarsTerrainField {
+export class UnifiedMarsTerrainField {
   private globalDem: Float32Array;
   private readonly globalW = 512;
   private readonly globalH = 256;
@@ -597,50 +648,70 @@ class UnifiedMarsTerrainField {
     return null;
   }
 
-  public ensureSiteMasterDemLoaded(site: ExpeditionSite) {
+  public async ensureSiteMasterDemLoaded(site: { id: string; roiBbox: [number, number, number, number] }) {
     if (this.siteDems.has(site.id) || this.siteLoading.has(site.id)) return;
     this.siteLoading.add(site.id);
 
     const [lonMin, latMin, lonMax, latMax] = site.roiBbox;
     const url = `https://trek.nasa.gov/mars/trekarcgis/rest/services/Mars_MOLA_blend200ppx_HRSC_DEM_clon0dd_200mpp_lzw/ImageServer/exportImage?bbox=${lonMin},${latMin},${lonMax},${latMax}&bboxSR=104905&size=${this.siteSize},${this.siteSize}&imageSR=104905&format=tiff&pixelType=S16&f=image`;
 
-    fetch(url)
-      .then((res) => (res.ok ? res.arrayBuffer() : null))
-      .then((buf) => {
-        if (!buf) return;
-        const floatGrid = UnifiedMarsTerrainField.decodeGeoTiffS16(buf, this.siteSize);
-        if (!floatGrid) return;
-
-        // Light 3x3 smoothing pass so integer meter steps are C1 smooth for Slope Radar
-        const smoothed = new Float32Array(floatGrid.length);
-        const N = this.siteSize;
-        for (let y = 0; y < N; y++) {
-          const y0 = Math.max(0, y - 1);
-          const y1 = Math.min(N - 1, y + 1);
-          for (let x = 0; x < N; x++) {
-            const x0 = Math.max(0, x - 1);
-            const x1 = Math.min(N - 1, x + 1);
-            smoothed[y * N + x] =
-              (floatGrid[y0 * N + x0] +
-                2 * floatGrid[y0 * N + x] +
-                floatGrid[y0 * N + x1] +
-                2 * floatGrid[y * N + x0] +
-                4 * floatGrid[y * N + x] +
-                2 * floatGrid[y * N + x1] +
-                floatGrid[y1 * N + x0] +
-                2 * floatGrid[y1 * N + x] +
-                floatGrid[y1 * N + x1]) /
-              16.0;
+    try {
+      let buf: ArrayBuffer | null = null;
+      if (typeof window !== 'undefined' && 'caches' in window) {
+        try {
+          const cache = await window.caches.open('ares-mars-dem-v1');
+          const match = await cache.match(url);
+          if (match) {
+            buf = await match.arrayBuffer();
           }
-        }
+        } catch {}
+      }
 
-        this.siteDems.set(site.id, smoothed);
-        this.onDemUpdated?.();
-      })
-      .catch(() => {})
-      .finally(() => {
-        this.siteLoading.delete(site.id);
-      });
+      if (!buf) {
+        const res = await fetch(url);
+        if (res.ok) {
+          if (typeof window !== 'undefined' && 'caches' in window) {
+            const clone = res.clone();
+            window.caches.open('ares-mars-dem-v1').then((c) => c.put(url, clone)).catch(() => {});
+          }
+          buf = await res.arrayBuffer();
+        }
+      }
+
+      if (buf) {
+        const floatGrid = UnifiedMarsTerrainField.decodeGeoTiffS16(buf, this.siteSize);
+        if (floatGrid) {
+          // Light 3x3 smoothing pass so integer meter steps are C1 smooth for Slope Radar
+          const smoothed = new Float32Array(floatGrid.length);
+          const N = this.siteSize;
+          for (let y = 0; y < N; y++) {
+            const y0 = Math.max(0, y - 1);
+            const y1 = Math.min(N - 1, y + 1);
+            for (let x = 0; x < N; x++) {
+              const x0 = Math.max(0, x - 1);
+              const x1 = Math.min(N - 1, x + 1);
+              smoothed[y * N + x] =
+                (floatGrid[y0 * N + x0] +
+                  2 * floatGrid[y0 * N + x] +
+                  floatGrid[y0 * N + x1] +
+                  2 * floatGrid[y * N + x0] +
+                  4 * floatGrid[y * N + x] +
+                  2 * floatGrid[y * N + x1] +
+                  floatGrid[y1 * N + x0] +
+                  2 * floatGrid[y1 * N + x] +
+                  floatGrid[y1 * N + x1]) /
+                16.0;
+            }
+          }
+
+          this.siteDems.set(site.id, smoothed);
+          this.onDemUpdated?.();
+        }
+      }
+    } catch {
+    } finally {
+      this.siteLoading.delete(site.id);
+    }
   }
 
   private static cubicHermite(p0: number, p1: number, p2: number, p3: number, t: number): number {
@@ -812,28 +883,104 @@ class UnifiedMarsTerrainField {
 }
 
 // ============================================================================
-// SHARED IN-MEMORY TILE CACHE & PRIORITY SCHEDULER
+// SHARED IN-MEMORY & BROWSER CACHE API PERSISTENT TILE STORAGE
 // ============================================================================
 const imageCache = new Map<string, Promise<HTMLImageElement | null>>();
 
 function fetchCachedImage(url: string): Promise<HTMLImageElement | null> {
-  let existing = imageCache.get(url);
+  const existing = imageCache.get(url);
   if (existing) return existing;
 
-  existing = new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
+  const promise = (async (): Promise<HTMLImageElement | null> => {
+    // 1. Alias root global tiles to pre-bundled local assets in /public/tiles/base/ for instant 0ms first-paint!
+    let targetUrl = url;
+    if (url.includes('mola128_mola64_merge_90Nto90S_SimpleC_clon0/1.0.0/default/default028mm/0/0/0.png')) {
+      targetUrl = '/tiles/base/mola_dem_west.png';
+    } else if (url.includes('mola128_mola64_merge_90Nto90S_SimpleC_clon0/1.0.0/default/default028mm/0/0/1.png')) {
+      targetUrl = '/tiles/base/mola_dem_east.png';
+    } else if (url.includes('Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/0/0/0.jpg')) {
+      targetUrl = '/tiles/base/viking_west.jpg';
+    } else if (url.includes('Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/0/0/1.jpg')) {
+      targetUrl = '/tiles/base/viking_east.jpg';
+    } else if (url.includes('Mars_MOLA_blend200ppx_HRSC_Shade_clon0dd_200mpp_lzw/1.0.0/default/default028mm/0/0/0.jpg')) {
+      targetUrl = '/tiles/base/shade_west.jpg';
+    } else if (url.includes('Mars_MOLA_blend200ppx_HRSC_Shade_clon0dd_200mpp_lzw/1.0.0/default/default028mm/0/0/1.jpg')) {
+      targetUrl = '/tiles/base/shade_east.jpg';
+    } else {
+      const z1Viking = url.match(/Mars_Viking_MDIM21_ClrMosaic_global_232m\/1\.0\.0\/default\/default028mm\/1\/([0-1])\/([0-3])\.jpg/);
+      if (z1Viking) {
+        targetUrl = `/tiles/z1/viking_${z1Viking[1]}_${z1Viking[2]}.jpg`;
+      } else {
+        const z1Shade = url.match(/Mars_MOLA_blend200ppx_HRSC_Shade_clon0dd_200mpp_lzw\/1\.0\.0\/default\/default028mm\/1\/([0-1])\/([0-3])\.jpg/);
+        if (z1Shade) {
+          targetUrl = `/tiles/z1/shade_${z1Shade[1]}_${z1Shade[2]}.jpg`;
+        }
+      }
+    }
 
-  if (imageCache.size > 400) {
+    // 2. Query persistent Browser Cache API ('ares-mars-tiles-v1') on client disk
+    if (typeof window !== 'undefined' && 'caches' in window) {
+      try {
+        const cache = await window.caches.open('ares-mars-tiles-v1');
+        const match = await cache.match(targetUrl);
+        if (match) {
+          const blob = await match.blob();
+          const objUrl = URL.createObjectURL(blob);
+          return await new Promise<HTMLImageElement | null>((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              URL.revokeObjectURL(objUrl);
+              resolve(img);
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(objUrl);
+              resolve(null);
+            };
+            img.src = objUrl;
+          });
+        }
+      } catch {}
+    }
+
+    // 3. Network Fetch with Auto-Persist to Cache API
+    return await new Promise<HTMLImageElement | null>((resolve) => {
+      fetch(targetUrl, { mode: 'cors' })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (typeof window !== 'undefined' && 'caches' in window) {
+            const clone = res.clone();
+            window.caches.open('ares-mars-tiles-v1').then((c) => c.put(targetUrl, clone)).catch(() => {});
+          }
+          const blob = await res.blob();
+          const objUrl = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            URL.revokeObjectURL(objUrl);
+            resolve(img);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(objUrl);
+            resolve(null);
+          };
+          img.src = objUrl;
+        })
+        .catch(() => {
+          // Direct Image.src fallback if fetch or CORS fails
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = targetUrl;
+        });
+    });
+  })();
+
+  if (imageCache.size > 600) {
     const firstKey = imageCache.keys().next().value;
     if (firstKey) imageCache.delete(firstKey);
   }
-  imageCache.set(url, existing);
-  return existing;
+  imageCache.set(url, promise);
+  return promise;
 }
 
 interface QueuedTask {
@@ -894,6 +1041,48 @@ class TileDownloadScheduler {
 // ============================================================================
 // QUADTREE SPHERICAL TILE NODE (100% SEAMLESS ACROSS ALL BORDERS)
 // ============================================================================
+const SLOPE_RADAR_LUT = (() => {
+  const lut = new Uint8Array(256 * 3);
+  for (let s = 0; s < 256; s++) {
+    const slopeDeg = s * 0.2; // 0.0 to 51.0 degrees
+    let r = 34;
+    let g = 197;
+    let b = 94;
+    if (slopeDeg < 8.0) {
+      const t = slopeDeg / 8.0;
+      r = 25 + t * 85;
+      g = 185 + t * 25;
+      b = 85 - t * 25;
+    } else if (slopeDeg <= 15.0) {
+      const t = (slopeDeg - 8.0) / 7.0;
+      r = 215 + t * 30;
+      g = 180 - t * 75;
+      b = 38 - t * 15;
+    } else {
+      const t = Math.min(1.0, (slopeDeg - 15.0) / 14.0);
+      r = 235 + t * 20;
+      g = 48 - t * 32;
+      b = 38 - t * 20;
+    }
+    lut[s * 3] = Math.round(r);
+    lut[s * 3 + 1] = Math.round(g);
+    lut[s * 3 + 2] = Math.round(b);
+  }
+  return lut;
+})();
+
+let sharedScratchCanvas: HTMLCanvasElement | null = null;
+function getSharedScratchCanvas(size: number): HTMLCanvasElement {
+  if (!sharedScratchCanvas) {
+    sharedScratchCanvas = document.createElement('canvas');
+  }
+  if (sharedScratchCanvas.width !== size || sharedScratchCanvas.height !== size) {
+    sharedScratchCanvas.width = size;
+    sharedScratchCanvas.height = size;
+  }
+  return sharedScratchCanvas;
+}
+
 class QuadTileNode {
   readonly z: number;
   readonly row: number;
@@ -1057,28 +1246,34 @@ class QuadTileNode {
 
     const imgData = ctx.getImageData(0, 0, texSize, texSize);
     const pixels = imgData.data;
-    const contourIntervalM = 60.0; // Constant across all zoom levels so contours never break at LOD borders!
+    const pixels32 = new Uint32Array(imgData.data.buffer);
+    const contourIntervalM = 60.0;
+    const isSlopeRadar = layerMode === 'slope_radar';
 
     for (let py = 0; py < texSize; py++) {
       const gy = (py / (texSize - 1)) * TILE_SEGMENTS;
       const r0 = Math.min(Math.floor(gy), TILE_SEGMENTS - 1);
       const fy = gy - r0;
+      const r0Row = r0 * DEM_GRID_SIZE;
+      const r1Row = (r0 + 1) * DEM_GRID_SIZE;
+      const pRowOffset = py * texSize;
 
       for (let px = 0; px < texSize; px++) {
-        const p = (py * texSize + px) * 4;
-        let outR = pixels[p];
-        let outG = pixels[p + 1];
-        let outB = pixels[p + 2];
+        const pIdx = pRowOffset + px;
+        const pByte = pIdx * 4;
+        let outR = pixels[pByte];
+        let outG = pixels[pByte + 1];
+        let outB = pixels[pByte + 2];
         const lum = (outR * 0.299 + outG * 0.587 + outB * 0.114) / 255.0;
 
         const gx = (px / (texSize - 1)) * TILE_SEGMENTS;
         const c0 = Math.min(Math.floor(gx), TILE_SEGMENTS - 1);
         const fx = gx - c0;
 
-        const idx00 = r0 * DEM_GRID_SIZE + c0;
-        const idx10 = r0 * DEM_GRID_SIZE + (c0 + 1);
-        const idx01 = (r0 + 1) * DEM_GRID_SIZE + c0;
-        const idx11 = (r0 + 1) * DEM_GRID_SIZE + (c0 + 1);
+        const idx00 = r0Row + c0;
+        const idx10 = r0Row + (c0 + 1);
+        const idx01 = r1Row + c0;
+        const idx11 = r1Row + (c0 + 1);
 
         const elevPx =
           (this.demGrid[idx00] * (1 - fx) + this.demGrid[idx10] * fx) * (1 - fy) +
@@ -1088,27 +1283,11 @@ class QuadTileNode {
           (this.slopeGrid[idx00] * (1 - fx) + this.slopeGrid[idx10] * fx) * (1 - fy) +
           (this.slopeGrid[idx01] * (1 - fx) + this.slopeGrid[idx11] * fx) * fy;
 
-        if (layerMode === 'slope_radar') {
-          let radarR = 34;
-          let radarG = 197;
-          let radarB = 94;
-
-          if (slopePx < 8.0) {
-            const t = slopePx / 8.0;
-            radarR = 25 + t * 85;
-            radarG = 185 + t * 25;
-            radarB = 85 - t * 25;
-          } else if (slopePx <= 15.0) {
-            const t = (slopePx - 8.0) / 7.0;
-            radarR = 215 + t * 30;
-            radarG = 180 - t * 75;
-            radarB = 38 - t * 15;
-          } else {
-            const t = Math.min(1.0, (slopePx - 15.0) / 14.0);
-            radarR = 235 + t * 20;
-            radarG = 48 - t * 32;
-            radarB = 38 - t * 20;
-          }
+        if (isSlopeRadar) {
+          const lutOffset = Math.min(255, (slopePx * 5) | 0) * 3;
+          const radarR = SLOPE_RADAR_LUT[lutOffset];
+          const radarG = SLOPE_RADAR_LUT[lutOffset + 1];
+          const radarB = SLOPE_RADAR_LUT[lutOffset + 2];
 
           const reliefShade = Math.max(0.32, Math.min(1.22, 0.38 + lum * 0.9));
           outR = outR * 0.22 + radarR * reliefShade * 0.78;
@@ -1116,27 +1295,26 @@ class QuadTileNode {
           outB = outB * 0.22 + radarB * reliefShade * 0.78;
         }
 
-        if (layerMode === 'slope_radar' || layerMode === 'tactical_contour') {
-          const modElev = ((elevPx % contourIntervalM) + contourIntervalM) % contourIntervalM;
-          const distToIso = Math.min(modElev, contourIntervalM - modElev);
-          const lineTol = Math.max(1.1, slopePx * 0.15);
-          if (distToIso < lineTol) {
-            const lineStrength = (1.0 - distToIso / lineTol) * 0.5;
-            if (slopePx > 14.5) {
-              outR = outR * (1 - lineStrength) + 255 * lineStrength;
-              outG = outG * (1 - lineStrength) + 175 * lineStrength;
-              outB = outB * (1 - lineStrength) + 70 * lineStrength;
-            } else {
-              outR = outR * (1 - lineStrength) + 235 * lineStrength;
-              outG = outG * (1 - lineStrength) + 245 * lineStrength;
-              outB = outB * (1 - lineStrength) + 255 * lineStrength;
-            }
+        const modElev = ((elevPx % contourIntervalM) + contourIntervalM) % contourIntervalM;
+        const distToIso = Math.min(modElev, contourIntervalM - modElev);
+        const lineTol = Math.max(1.1, slopePx * 0.15);
+        if (distToIso < lineTol) {
+          const lineStrength = (1.0 - distToIso / lineTol) * 0.5;
+          if (slopePx > 14.5) {
+            outR = outR * (1 - lineStrength) + 255 * lineStrength;
+            outG = outG * (1 - lineStrength) + 175 * lineStrength;
+            outB = outB * (1 - lineStrength) + 70 * lineStrength;
+          } else {
+            outR = outR * (1 - lineStrength) + 235 * lineStrength;
+            outG = outG * (1 - lineStrength) + 245 * lineStrength;
+            outB = outB * (1 - lineStrength) + 255 * lineStrength;
           }
         }
 
-        pixels[p] = Math.min(255, Math.max(0, Math.round(outR)));
-        pixels[p + 1] = Math.min(255, Math.max(0, Math.round(outG)));
-        pixels[p + 2] = Math.min(255, Math.max(0, Math.round(outB)));
+        const fR = Math.min(255, Math.max(0, outR | 0));
+        const fG = Math.min(255, Math.max(0, outG | 0));
+        const fB = Math.min(255, Math.max(0, outB | 0));
+        pixels32[pIdx] = (255 << 24) | (fB << 16) | (fG << 8) | fR;
       }
     }
 
@@ -1490,9 +1668,7 @@ async function loadTileImageryFromTrek(
   if (node.isDisposed) return;
 
   const bCtx = node.baseImageryCanvas.getContext('2d')!;
-  const scratch = document.createElement('canvas');
-  scratch.width = texSize;
-  scratch.height = texSize;
+  const scratch = getSharedScratchCanvas(texSize);
   const sCtx = scratch.getContext('2d')!;
 
   const drawSubQuadrant = (
@@ -2032,6 +2208,10 @@ function computeRoundTripSafeRoute(
   let sumFriction = 0;
   let totalTimeHours = 0;
   let totalEnergyWh = 0;
+  let totalWaterBurnGrams = 0;
+  let totalO2BurnGrams = 0;
+  let maxMetabolicWatts = 0;
+  let sumMetabolicWatts = 0;
 
   const accumulateLeg = (
     pts: typeof outboundPoints,
@@ -2058,16 +2238,23 @@ function computeRoundTripSafeRoute(
               4.5 * Math.exp(-3.5 * Math.abs(Math.tan((pt.pitchDeg * Math.PI) / 180) + 0.04))
             );
 
+      // ALGORITHM 1: Modified Santee-Pandolf at 0.38g & PLSS Tri-Expendables
+      const bio = computeSanteePandolf038g(speedKmh, pt.pitchDeg, pt.frictionMu);
       const powerWatts =
         mode === 'ROVER_AUTOPILOT'
-          ? 145 + pt.slopeDeg * 14.5 + (0.8 - pt.frictionMu) * 180
-          : 180 + Math.max(0, pt.pitchDeg) * 14.0 + pt.slopeDeg * 8.5;
+          ? Math.round(145 + pt.slopeDeg * 14.5 + (0.8 - pt.frictionMu) * 180)
+          : bio.metabolicWatts;
 
       if (stepKm > 0) {
         const dtH = stepKm / speedKmh;
         totalTimeHours += dtH;
         totalEnergyWh += powerWatts * dtH;
+        totalWaterBurnGrams += bio.waterBurnGramsPerHour * dtH;
+        totalO2BurnGrams += bio.o2BurnGramsPerHour * dtH;
       }
+
+      if (powerWatts > maxMetabolicWatts) maxMetabolicWatts = powerWatts;
+      sumMetabolicWatts += powerWatts;
 
       const slipRiskPct = Math.min(
         98,
@@ -2082,6 +2269,16 @@ function computeRoundTripSafeRoute(
         slipRiskPct,
         metabolicWatts: Math.round(powerWatts),
         leg,
+        velocityMs: bio.velocityMs,
+        waterBurnRateGph: bio.waterBurnGramsPerHour,
+        cumWaterBurnG: Math.round(totalWaterBurnGrams),
+        cumO2BurnG: Math.round(totalO2BurnGrams),
+        soilClass:
+          bio.soilClass === 'CLASS_A_ROCK'
+            ? 'A (ROCK)'
+            : bio.soilClass === 'CLASS_B_SAND'
+            ? 'B (SAND)'
+            : 'C (DUST TRAP)',
       });
     }
   };
@@ -2230,6 +2427,12 @@ function computeRoundTripSafeRoute(
   ];
 
   const totalCount = outboundPoints.length + returnPoints.length;
+  // NASA EVA Rule of Half: 4.5kg total water, 2.25kg one-way limit with 20% margin => 3.6kg round-trip limit
+  const ruleOfHalfCompliant = mode === 'ROVER_AUTOPILOT' || totalWaterBurnGrams <= 3600;
+  const waterReserveMarginPct = Math.max(
+    0,
+    Math.round(((4500 - totalWaterBurnGrams) / 4500) * 100)
+  );
 
   return {
     mode,
@@ -2248,6 +2451,12 @@ function computeRoundTripSafeRoute(
     avgFrictionMu: Number((sumFriction / Math.max(1, totalCount)).toFixed(2)),
     estEnergyWh: Math.max(40, Math.round(totalEnergyWh)),
     hazardPoints,
+    totalWaterBurnGrams: Math.round(totalWaterBurnGrams),
+    totalO2BurnGrams: Math.round(totalO2BurnGrams),
+    maxMetabolicWatts,
+    avgMetabolicWatts: Math.round(sumMetabolicWatts / Math.max(1, totalCount)),
+    ruleOfHalfCompliant,
+    waterReserveMarginPct,
   };
 }
 
@@ -2300,8 +2509,25 @@ export default function MarsGlobeViewer() {
   const [syncRealMarsTime, setSyncRealMarsTime] = useState<boolean>(true);
   // Use a deterministic timestamp for initial SSR/hydration render; useEffect immediately syncs to live Date.now()
   const [marsEphemeris, setMarsEphemeris] = useState<RealMarsEphemeris>(() =>
-    computeRealMarsTimeAndSun(77.4508, 1763148000000)
+    computeRealMarsTimeAndSun(77.4508, 18.4447, 1763148000000)
   );
+
+  // FR-07: RAD-HAVEN Topographic Ray-Tracing & SPE Evacuation Router
+  const [isSpeAlertActive, setIsSpeAlertActive] = useState<boolean>(false);
+  const [speReport, setSpeReport] = useState<SpeHavenReport | null>(null);
+
+  // FR-09: RF Line-of-Sight Mapping & Comms Blackout Zones
+  const [showRfCommsGrid, setShowRfCommsGrid] = useState<boolean>(false);
+  const [rfCommsReport, setRfCommsReport] = useState<RfCommsReport | null>(null);
+
+  // Algorithm 2: Dynamic Walkback Isochrone Generator
+  const [showWalkbackIsochrone, setShowWalkbackIsochrone] = useState<boolean>(true);
+  const [walkbackIsochrone, setWalkbackIsochrone] = useState<WalkbackIsochroneBoundary | null>(null);
+
+  // FR-03: Natural Language / Textual Search Bar & Coordinate Autocomplete
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchResults, setSearchResults] = useState<MarsLandmark[]>([]);
+  const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
 
   // Live Telemetry & Inclinometer State
   const [maxRenderedZoom, setMaxRenderedZoom] = useState<number>(0);
@@ -2331,6 +2557,12 @@ export default function MarsGlobeViewer() {
     externalTempC: number;
     atmosPresPa: number;
     qualityTierLabel: string;
+    metabolicWatts: number;
+    waterBurnGph: number;
+    waterReservePct: number;
+    o2ReservePct: number;
+    liohReservePct: number;
+    batteryReservePct: number;
   }>({
     lat: 18.4447,
     lon: 77.4508,
@@ -2347,12 +2579,18 @@ export default function MarsGlobeViewer() {
     speedKmh: 0.84,
     wheelTorques: [86, 76, 76, 45, 35, 52],
     o2SatPct: 98,
-    suitPressureKpa: 34.0,
+    suitPressureKpa: 29.65, // Standard NASA 4.3 psi = 29.65 kPa
     heartRateBpm: 76,
     radiationMsvH: 0.12,
     externalTempC: -62,
     atmosPresPa: 710,
     qualityTierLabel: 'ULTRA-HD Z12',
+    metabolicWatts: 245,
+    waterBurnGph: 267,
+    waterReservePct: 88,
+    o2ReservePct: 96,
+    liohReservePct: 92,
+    batteryReservePct: 84,
   });
 
   // Sun & Layer Controls
@@ -2368,6 +2606,9 @@ export default function MarsGlobeViewer() {
   const markers3DGroupRef = useRef<THREE.Group | null>(null);
   const orbitalRingsGroupRef = useRef<THREE.Group | null>(null);
   const route3DGroupRef = useRef<THREE.Group | null>(null);
+  const isochrone3DGroupRef = useRef<THREE.Group | null>(null);
+  const spe3DGroupRef = useRef<THREE.Group | null>(null);
+  const rf3DGroupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
   const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
@@ -2430,6 +2671,176 @@ export default function MarsGlobeViewer() {
     const timer = setInterval(tickMarsClock, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // 3D Mesh Generator for Algorithm 2: Walkback Isochrone
+  const updateIsochrone3DMeshes = useCallback(
+    (isochrone: WalkbackIsochroneBoundary | null) => {
+      const group = isochrone3DGroupRef.current;
+      const terrainField = terrainFieldRef.current;
+      if (!group || !terrainField) return;
+
+      while (group.children.length > 0) {
+        const child = group.children[0] as THREE.Mesh;
+        group.remove(child);
+        child.geometry?.dispose();
+      }
+
+      if (!showWalkbackIsochrone || !isochrone || !routingEnabled) return;
+
+      const pts3D = isochrone.safeBoundaryPoints.map((p) => {
+        const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + 0.008;
+        return latLonToVector3(p.lat, p.lon, rad);
+      });
+      if (pts3D.length < 3) return;
+      pts3D.push(pts3D[0].clone()); // Close polygon loop
+
+      const curve = new THREE.CatmullRomCurve3(pts3D, true);
+      const tubeGeom = new THREE.TubeGeometry(curve, 180, 0.004, 8, true);
+      const tubeMat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.85,
+      });
+      group.add(new THREE.Mesh(tubeGeom, tubeMat));
+
+      const glowGeom = new THREE.TubeGeometry(curve, 120, 0.012, 8, true);
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: 0x0284c7,
+        transparent: true,
+        opacity: 0.28,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      group.add(new THREE.Mesh(glowGeom, glowMat));
+    },
+    [routingEnabled, showWalkbackIsochrone]
+  );
+
+  // 3D Mesh Generator for FR-07: RAD-HAVEN Evacuation Route & Cliff Shelter
+  const updateSpe3DMeshes = useCallback((report: SpeHavenReport | null) => {
+    const group = spe3DGroupRef.current;
+    const terrainField = terrainFieldRef.current;
+    if (!group || !terrainField) return;
+
+    while (group.children.length > 0) {
+      const child = group.children[0] as THREE.Mesh;
+      group.remove(child);
+      child.geometry?.dispose();
+    }
+
+    if (!report || !report.bestHaven) return;
+
+    const haven = report.bestHaven;
+    const routePts = haven.evacRoute.map((p) => {
+      const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + 0.012;
+      return latLonToVector3(p.lat, p.lon, rad);
+    });
+
+    if (routePts.length >= 2) {
+      const curve = new THREE.CatmullRomCurve3(routePts);
+      const tubeGeom = new THREE.TubeGeometry(curve, 80, 0.007, 8, false);
+      const tubeMat = new THREE.MeshBasicMaterial({
+        color: 0xf43f5e,
+        transparent: true,
+        opacity: 0.95,
+      });
+      group.add(new THREE.Mesh(tubeGeom, tubeMat));
+
+      const glowGeom = new THREE.TubeGeometry(curve, 60, 0.018, 8, false);
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: 0xff0055,
+        transparent: true,
+        opacity: 0.45,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      group.add(new THREE.Mesh(glowGeom, glowMat));
+    }
+
+    const havenRad =
+      elevationMetersToRadius(haven.elevM, paramsRef.current.exaggeration) + 0.02;
+    const havenPos = latLonToVector3(haven.lat, haven.lon, havenRad);
+
+    const beaconGeom = new THREE.CylinderGeometry(0.015, 0.005, 0.5, 16);
+    beaconGeom.rotateX(Math.PI / 2);
+    const beaconMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+    const beaconMesh = new THREE.Mesh(beaconGeom, beaconMat);
+    beaconMesh.position.copy(havenPos);
+    beaconMesh.lookAt(new THREE.Vector3(0, 0, 0));
+    group.add(beaconMesh);
+
+    const domeGeom = new THREE.SphereGeometry(0.04, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const domeMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.5,
+      wireframe: true,
+    });
+    const domeMesh = new THREE.Mesh(domeGeom, domeMat);
+    domeMesh.position.copy(havenPos);
+    group.add(domeMesh);
+  }, []);
+
+  // 3D Mesh Generator for FR-09: RF Line-of-Sight & Orbiter Relays
+  const updateRfComms3DMeshes = useCallback(
+    (report: RfCommsReport | null) => {
+      const group = rf3DGroupRef.current;
+      const terrainField = terrainFieldRef.current;
+      if (!group || !terrainField) return;
+
+      while (group.children.length > 0) {
+        const child = group.children[0] as THREE.Mesh;
+        group.remove(child);
+        child.geometry?.dispose();
+      }
+
+      if (!showRfCommsGrid || !report) return;
+
+      const originElev = terrainField.getElevationMeters(report.surfaceLat, report.surfaceLon);
+      const originRad =
+        elevationMetersToRadius(originElev, paramsRef.current.exaggeration) + 0.02;
+      const originPos = latLonToVector3(report.surfaceLat, report.surfaceLon, originRad);
+
+      // Direct-to-Earth Vector Beam
+      const earthBeamDist = 18.0;
+      const earthTarget = latLonToVector3(
+        report.earthDte.elevationDeg,
+        report.earthDte.azimuthDeg,
+        originRad + earthBeamDist
+      );
+      const earthLineGeom = new THREE.BufferGeometry().setFromPoints([originPos, earthTarget]);
+      const earthLineMat = new THREE.LineDashedMaterial({
+        color: !report.earthDte.isMaskedByTerrain ? 0x00f0ff : 0xf43f5e,
+        dashSize: 0.4,
+        gapSize: 0.2,
+        transparent: true,
+        opacity: 0.85,
+      });
+      const earthLine = new THREE.Line(earthLineGeom, earthLineMat);
+      earthLine.computeLineDistances();
+      group.add(earthLine);
+
+      // MRO and Odyssey Relay Orbit Links
+      const orbiters = [report.mro, report.odyssey];
+      for (const orb of orbiters) {
+        if (!orb.isInView) continue;
+        const orbDist = 14.0;
+        const orbPos = latLonToVector3(orb.elevationDeg, orb.azimuthDeg, originRad + orbDist);
+        const orbLineGeom = new THREE.BufferGeometry().setFromPoints([originPos, orbPos]);
+        const orbLineMat = new THREE.LineDashedMaterial({
+          color: !orb.isMaskedByTerrain ? 0x10b981 : 0xf59e0b,
+          dashSize: 0.3,
+          gapSize: 0.15,
+          transparent: true,
+          opacity: 0.75,
+        });
+        const orbLine = new THREE.Line(orbLineGeom, orbLineMat);
+        orbLine.computeLineDistances();
+        group.add(orbLine);
+      }
+    },
+    [showRfCommsGrid]
+  );
 
   // Rebuild 3D Outbound (A->B) & Return (B->A) Routes whenever endpoints, mode, or DEM updates
   const rebuildRoutesAndMeshes = useCallback(() => {
@@ -2546,11 +2957,183 @@ export default function MarsGlobeViewer() {
     if (showReturnLeg) {
       buildLegTube(routeData.returnPoints, 0xf59e0b, 0.015, tubeR * 0.9);
     }
-  }, [routeEndpoints, routingEnabled, showReturnLeg, traverseMode]);
+
+    // ALGORITHM 2: Dynamic Walkback Isochrone Generator (NASA EVA Rule of Half)
+    if (traverseMode === 'ASTRONAUT_HIKE' && showWalkbackIsochrone) {
+      const isochrone = computeWalkbackIsochrone(
+        routeEndpoints.startLat,
+        routeEndpoints.startLon,
+        terrainField,
+        4.5,
+        5.0
+      );
+      setWalkbackIsochrone(isochrone);
+      updateIsochrone3DMeshes(isochrone);
+    } else {
+      setWalkbackIsochrone(null);
+      updateIsochrone3DMeshes(null);
+    }
+  }, [
+    routeEndpoints,
+    routingEnabled,
+    showReturnLeg,
+    showWalkbackIsochrone,
+    traverseMode,
+    updateIsochrone3DMeshes,
+  ]);
 
   useEffect(() => {
     rebuildRoutesAndMeshes();
   }, [rebuildRoutesAndMeshes, exaggeration, demVersion]);
+
+  // Safe Haven Scanner (Concentric radial solver around B2)
+  const handleScanNearbySafeHaven = useCallback(() => {
+    const terrainField = terrainFieldRef.current;
+    if (!terrainField) return;
+
+    const baseLat = routeEndpoints.endLat;
+    const baseLon = routeEndpoints.endLon;
+    const cosLat = Math.cos((baseLat * Math.PI) / 180.0);
+
+    let bestLat = baseLat;
+    let bestLon = baseLon;
+    let bestScore = -9999;
+
+    const radiiKm = [0.4, 0.8, 1.2, 1.6, 2.2, 2.8, 3.5];
+    const azimuths = 16;
+
+    for (const rKm of radiiKm) {
+      for (let i = 0; i < azimuths; i++) {
+        const azRad = (i / azimuths) * Math.PI * 2;
+        const dX = rKm * Math.sin(azRad);
+        const dY = rKm * Math.cos(azRad);
+
+        const candLat = Math.max(
+          -85.0,
+          Math.min(85.0, baseLat + (dY / MARS_RADIUS_KM) * (180.0 / Math.PI))
+        );
+        const candLon = normalizeLon(baseLon + (dX / (MARS_RADIUS_KM * cosLat)) * (180.0 / Math.PI));
+
+        const m = terrainField.sampleMetricsAt(candLat, candLon, 0);
+        if (m.slopeDeg < 12.0) {
+          const score = 100 - m.slopeDeg * 5 + m.frictionMu * 25 - rKm * 6;
+          if (score > bestScore) {
+            bestScore = score;
+            bestLat = candLat;
+            bestLon = candLon;
+          }
+        }
+      }
+    }
+
+    if (bestScore > -999) {
+      setRouteEndpoints((prev) => ({
+        ...prev,
+        endLat: Number(bestLat.toFixed(4)),
+        endLon: Number(bestLon.toFixed(4)),
+      }));
+    }
+  }, [routeEndpoints.endLat, routeEndpoints.endLon]);
+
+  // Landmark Selection & Flight Handler
+  const handleSelectLandmark = useCallback((lm: MarsLandmark) => {
+    terrainFieldRef.current?.ensureSiteMasterDemLoaded({
+      id: lm.id,
+      roiBbox: [lm.lon - 0.5, lm.lat - 0.5, lm.lon + 0.5, lm.lat + 0.5],
+    });
+
+    const nav = navStateRef.current;
+    nav.targetLat = lm.lat;
+    nav.targetLon = normalizeLon(lm.lon);
+    nav.targetAltitude = (28 / MARS_RADIUS_KM) * GLOBE_RADIUS;
+    nav.targetTiltDeg = 45;
+    setIsGlobalCommandView(false);
+
+    setRouteEndpoints((prev) => ({
+      ...prev,
+      endLat: lm.lat,
+      endLon: lm.lon,
+    }));
+
+    setIsSearchOpen(false);
+    setSearchQuery(lm.name);
+  }, []);
+
+  const handleSearchSubmit = useCallback(
+    (query: string) => {
+      const coord = parseCoordinateQuery(query);
+      if (coord) {
+        const nav = navStateRef.current;
+        nav.targetLat = coord.lat;
+        nav.targetLon = normalizeLon(coord.lon);
+        nav.targetAltitude = (28 / MARS_RADIUS_KM) * GLOBE_RADIUS;
+        setIsGlobalCommandView(false);
+        setRouteEndpoints((prev) => ({
+          ...prev,
+          endLat: coord.lat,
+          endLon: coord.lon,
+        }));
+        setIsSearchOpen(false);
+        return;
+      }
+
+      const results = searchMarsLandmarks(query);
+      if (results.length > 0) {
+        handleSelectLandmark(results[0]);
+      }
+    },
+    [handleSelectLandmark]
+  );
+
+  const handleToggleSpeAlert = useCallback(() => {
+    setIsSpeAlertActive((prev) => {
+      const next = !prev;
+      if (next && terrainFieldRef.current) {
+        const rep = computeRadHavenSpe(
+          navStateRef.current.focusLat,
+          navStateRef.current.focusLon,
+          terrainFieldRef.current,
+          marsEphemeris.subsolarLat,
+          marsEphemeris.subsolarLon,
+          marsEphemeris.perseveranceSol
+        );
+        setSpeReport(rep);
+        updateSpe3DMeshes(rep);
+      } else {
+        setSpeReport(null);
+        updateSpe3DMeshes(null);
+      }
+      return next;
+    });
+  }, [
+    marsEphemeris.perseveranceSol,
+    marsEphemeris.subsolarLat,
+    marsEphemeris.subsolarLon,
+    updateSpe3DMeshes,
+  ]);
+
+  const handleToggleRfComms = useCallback(() => {
+    setShowRfCommsGrid((prev) => {
+      const next = !prev;
+      if (next && terrainFieldRef.current) {
+        const curElev = terrainFieldRef.current.getElevationMeters(
+          navStateRef.current.focusLat,
+          navStateRef.current.focusLon
+        );
+        const rep = computeRfCommsStatus(
+          navStateRef.current.focusLat,
+          navStateRef.current.focusLon,
+          terrainFieldRef.current
+        );
+        setRfCommsReport(rep);
+        updateRfComms3DMeshes(rep);
+      } else {
+        setRfCommsReport(null);
+        updateRfComms3DMeshes(null);
+      }
+      return next;
+    });
+  }, [marsEphemeris.subsolarLon, updateRfComms3DMeshes]);
 
   useEffect(() => {
     paramsRef.current.exaggeration = exaggeration;
@@ -2804,6 +3387,18 @@ export default function MarsGlobeViewer() {
     const route3DGroup = new THREE.Group();
     scene.add(route3DGroup);
     route3DGroupRef.current = route3DGroup;
+
+    const isochrone3DGroup = new THREE.Group();
+    scene.add(isochrone3DGroup);
+    isochrone3DGroupRef.current = isochrone3DGroup;
+
+    const spe3DGroup = new THREE.Group();
+    scene.add(spe3DGroup);
+    spe3DGroupRef.current = spe3DGroup;
+
+    const rf3DGroup = new THREE.Group();
+    scene.add(rf3DGroup);
+    rf3DGroupRef.current = rf3DGroup;
 
     const markers3DGroup = new THREE.Group();
     scene.add(markers3DGroup);
@@ -3344,6 +3939,8 @@ export default function MarsGlobeViewer() {
           nav.focusLat + 0.05
         );
 
+        const bioLive = computeSanteePandolf038g(speedKmh, pitchDeg, frictionMu);
+
         setLiveTelemetry({
           lat: nav.focusLat,
           lon: normalizeLon(nav.focusLon),
@@ -3360,25 +3957,39 @@ export default function MarsGlobeViewer() {
           speedKmh,
           wheelTorques,
           o2SatPct: 98,
-          suitPressureKpa: 34.0,
+          suitPressureKpa: 29.65, // Standard NASA 4.3 psi = 29.65 kPa
           heartRateBpm: Math.min(148, Math.round(72 + slopeDeg * 2.4)),
           radiationMsvH: Number(Math.max(0.06, 0.14 + (elevM / 10000) * 0.04).toFixed(2)),
           externalTempC,
           atmosPresPa,
           qualityTierLabel: matchedSite ? `ULTRA-HD Z${matchedSite.maxZoom}` : `GLOBAL Z${MAX_GLOBAL_ZOOM}`,
+          metabolicWatts: bioLive.metabolicWatts,
+          waterBurnGph: bioLive.waterBurnGramsPerHour,
+          waterReservePct: activeRouteData?.waterReserveMarginPct ?? 88,
+          o2ReservePct: 96,
+          liohReservePct: 92,
+          batteryReservePct: 84,
         });
       }
     };
 
     let animId: number;
-    const animate = () => {
+    let lastLodTime = 0;
+    const animate = (timestamp: number) => {
       animId = requestAnimationFrame(animate);
       const focusPoint3D = updateSphericalCamera();
-      updateQuadtreeLOD(focusPoint3D);
+
+      // Throttle quadtree LOD evaluation to ~12 Hz (every 80ms)
+      // This maintains high-performance 60 FPS rendering without CPU quadtree thrashing!
+      if (timestamp - lastLodTime > 80) {
+        updateQuadtreeLOD(focusPoint3D);
+        lastLodTime = timestamp;
+      }
+
       updateBeaconsAndOverlays();
       renderer.render(scene, camera);
     };
-    animate();
+    animId = requestAnimationFrame(animate);
 
     const handleResize = () => {
       if (!containerRef.current) return;
@@ -3536,7 +4147,7 @@ export default function MarsGlobeViewer() {
             TOP TACTICAL COMMAND HEADER BAR
            =================================================================== */}
         <header className="h-12 bg-[#0b101b]/95 border-b border-slate-700/80 px-4 flex items-center justify-between z-20 shrink-0">
-          {/* Left: System Title */}
+          {/* Left: System Title & FR-03 Search Bar */}
           <div className="flex items-center gap-3">
             <div className="h-7 w-7 rounded bg-amber-500/15 border border-amber-500/60 flex items-center justify-center text-amber-400 font-bold text-sm">
               ▲
@@ -3545,8 +4156,8 @@ export default function MarsGlobeViewer() {
               <span className="text-slate-100">
                 {layerMode === 'slope_radar' ? 'DYNAMIC SLOPE RADAR' : 'ARES-NAVIGATOR'}
               </span>
-              <span className="text-slate-600">|</span>
-              <span className="text-slate-400 font-mono text-xs hidden sm:inline">
+              <span className="text-slate-600 hidden xl:inline">|</span>
+              <span className="text-slate-400 font-mono text-xs hidden xl:inline">
                 {isGlobalCommandView
                   ? 'GLOBAL MARS COMMAND'
                   : routingEnabled
@@ -3554,9 +4165,80 @@ export default function MarsGlobeViewer() {
                   : 'FREE EXPLORATION'}
               </span>
             </div>
+
+            {/* FR-03: Mars Landmark & Coordinate Search Bar */}
+            <div className="relative hidden md:block">
+              <div className="flex items-center bg-[#060c16] border border-slate-700 hover:border-cyan-500/70 focus-within:border-cyan-400 rounded px-2 py-0.5 transition-all w-44 lg:w-60">
+                <span className="text-slate-400 text-xs mr-1.5">🔍</span>
+                <input
+                  type="text"
+                  placeholder="Crater, Boxwork, Lat/Lon..."
+                  value={searchQuery}
+                  onFocus={() => {
+                    setIsSearchOpen(true);
+                    setSearchResults(searchMarsLandmarks(searchQuery));
+                  }}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setIsSearchOpen(true);
+                    setSearchResults(searchMarsLandmarks(e.target.value));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleSearchSubmit(searchQuery);
+                    }
+                  }}
+                  className="bg-transparent text-[11px] font-mono text-slate-100 placeholder-slate-500 focus:outline-hidden w-full"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSearchResults([]);
+                      setIsSearchOpen(false);
+                    }}
+                    className="text-slate-500 hover:text-slate-300 text-xs ml-1"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Autocomplete Dropdown */}
+              {isSearchOpen && (
+                <div className="absolute top-full left-0 mt-1 w-80 max-h-72 bg-[#09111e]/98 border border-cyan-500/60 rounded-lg shadow-[0_10px_30px_rgba(0,0,0,0.8),0_0_15px_rgba(0,240,255,0.2)] overflow-y-auto z-50 p-1">
+                  <div className="px-2 py-1 text-[9px] font-mono uppercase text-slate-400 border-b border-slate-800 flex justify-between">
+                    <span>NASA TARGETS (BOXWORK, CLAYS, ICE)</span>
+                    <span>SCI / ELEV</span>
+                  </div>
+                  {(searchResults.length > 0 ? searchResults : MARS_LANDMARKS.slice(0, 7)).map(
+                    (lm) => (
+                      <button
+                        key={lm.id}
+                        onClick={() => handleSelectLandmark(lm)}
+                        className="w-full text-left px-2 py-1.5 rounded hover:bg-cyan-500/20 hover:border-cyan-400/50 border border-transparent transition-all flex flex-col gap-0.5 group cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-200 group-hover:text-cyan-300 font-mono">
+                            {lm.name}
+                          </span>
+                          <span className="text-[10px] font-mono text-amber-300">
+                            {lm.elevationM} m
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[9px] font-mono text-slate-400">
+                          <span className="truncate max-w-[190px]">{lm.mineralogy}</span>
+                          <span className="text-cyan-400 font-bold">{lm.scienceValueScore}/100 SCI</span>
+                        </div>
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Center: Mode Switcher + Exit Routing Button + Layer Buttons */}
+          {/* Center: Mode Switcher + FR-07 SPE Haven + FR-09 RF Comms + Layer Buttons */}
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => {
@@ -3564,13 +4246,13 @@ export default function MarsGlobeViewer() {
                 setTraverseMode('ROVER_AUTOPILOT');
                 setIsGlobalCommandView(false);
               }}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border ${
+              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border cursor-pointer ${
                 routingEnabled && !isGlobalCommandView && traverseMode === 'ROVER_AUTOPILOT'
                   ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.35)]'
                   : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
             >
-              [ROVER AUTOPILOT]
+              [ROVER]
             </button>
             <button
               onClick={() => {
@@ -3578,7 +4260,7 @@ export default function MarsGlobeViewer() {
                 setTraverseMode('ASTRONAUT_HIKE');
                 setIsGlobalCommandView(false);
               }}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border ${
+              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border cursor-pointer ${
                 routingEnabled && !isGlobalCommandView && traverseMode === 'ASTRONAUT_HIKE'
                   ? 'bg-amber-500/25 text-amber-200 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.35)]'
                   : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
@@ -3587,16 +4269,57 @@ export default function MarsGlobeViewer() {
               [ASTRONAUT HIKE]
             </button>
 
+            {/* FR-07: RAD-HAVEN Solar Particle Event Shelter Router */}
+            <button
+              onClick={handleToggleSpeAlert}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all border cursor-pointer ${
+                isSpeAlertActive
+                  ? 'bg-rose-500/35 text-rose-200 border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.5)] animate-pulse'
+                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-rose-300'
+              }`}
+              title="FR-07: RAD-HAVEN 3D Topographic Ray-Tracing & SPE Radiation Haven Evacuation Router"
+            >
+              ⚡ SPE HAVEN
+            </button>
+
+            {/* FR-09: Direct-to-Earth & Mars Orbiter RF Comms Blackout Mapper */}
+            <button
+              onClick={handleToggleRfComms}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all border cursor-pointer ${
+                showRfCommsGrid
+                  ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.4)]'
+                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-cyan-300'
+              }`}
+              title="FR-09: RF Line-of-Sight Mapping & Canyon Comms Blackout Zones"
+            >
+              📡 RF COMMS
+            </button>
+
+            {/* Algorithm 2: Dynamic Walkback Isochrone Toggle */}
+            {traverseMode === 'ASTRONAUT_HIKE' && (
+              <button
+                onClick={() => setShowWalkbackIsochrone(!showWalkbackIsochrone)}
+                className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all border cursor-pointer ${
+                  showWalkbackIsochrone
+                    ? 'bg-sky-500/25 text-sky-200 border-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.3)]'
+                    : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
+                }`}
+                title="Algorithm 2: NASA EVA Rule of Half 3D Walkback Isochrone Polygon"
+              >
+                ISOCHRONE
+              </button>
+            )}
+
             {routingEnabled && (
               <button
                 onClick={() => {
                   setRoutingEnabled(false);
                   setPickingMode('NONE');
                 }}
-                className="px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/60 transition-all"
+                className="px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/60 transition-all cursor-pointer"
                 title="Exit Routing Mode and hide all routes"
               >
-                ✕ EXIT ROUTE
+                ✕ EXIT
               </button>
             )}
 
@@ -3859,7 +4582,7 @@ export default function MarsGlobeViewer() {
 
                       {/* UNTRAVERSABLE WARNING OR STEP-BY-STEP ROUND-TRIP CARDS */}
                       {activeRouteData && !activeRouteData.isTraversable ? (
-                        <div className="bg-rose-950/75 border-2 border-rose-500 rounded-xl p-3 space-y-1.5">
+                        <div className="bg-rose-950/75 border-2 border-rose-500 rounded-xl p-3 space-y-2">
                           <div className="text-xs font-bold text-rose-300 uppercase flex items-center gap-1.5">
                             <span>⛔</span>
                             <span>ROUTE UNTRAVERSABLE</span>
@@ -3867,8 +4590,15 @@ export default function MarsGlobeViewer() {
                           <p className="text-[11px] text-rose-100/90 leading-relaxed">
                             {activeRouteData.failureReason}
                           </p>
-                          <div className="text-[10px] font-mono text-rose-300 pt-1">
-                            Select new A1 / B2 points in green/yellow Slope Radar zones.
+                          <button
+                            onClick={handleScanNearbySafeHaven}
+                            className="w-full py-1.5 px-2 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-400 text-emerald-200 font-mono text-[10px] font-bold tracking-wider uppercase transition-all shadow-[0_0_12px_rgba(16,185,129,0.3)] flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <span>🎯</span>
+                            <span>AUTO-SCAN ACCESSIBLE HAVEN</span>
+                          </button>
+                          <div className="text-[9px] font-mono text-rose-300 pt-0.5">
+                            Radial terrain solver finds nearest accessible slope &lt; 12° destination.
                           </div>
                         </div>
                       ) : (
@@ -3981,25 +4711,62 @@ export default function MarsGlobeViewer() {
                     <div className="text-[10px] text-slate-400 font-mono">km/h</div>
                   </div>
 
-                  <div className="space-y-1 pt-1">
-                    <div className="text-[10px] font-bold tracking-wider text-slate-300 uppercase">
-                      WHEEL TORQUE
+                  {traverseMode === 'ROVER_AUTOPILOT' ? (
+                    <div className="space-y-1 pt-1">
+                      <div className="text-[10px] font-bold tracking-wider text-slate-300 uppercase">
+                        WHEEL TORQUE
+                      </div>
+                      {liveTelemetry.wheelTorques.map((t, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-[10px] font-mono">
+                          <span className="text-slate-400 w-6">W {idx + 1}</span>
+                          <div className="flex-1 h-2 bg-slate-800 rounded overflow-hidden">
+                            <div
+                              className={`h-full rounded ${
+                                t > 80 ? 'bg-amber-400' : 'bg-amber-500/80'
+                              }`}
+                              style={{ width: `${t}%` }}
+                            />
+                          </div>
+                          <span className="text-slate-300 w-7 text-right">{t}%</span>
+                        </div>
+                      ))}
                     </div>
-                    {liveTelemetry.wheelTorques.map((t, idx) => (
-                      <div key={idx} className="flex items-center gap-2 text-[10px] font-mono">
-                        <span className="text-slate-400 w-6">W {idx + 1}</span>
-                        <div className="flex-1 h-2 bg-slate-800 rounded overflow-hidden">
+                  ) : (
+                    <div className="space-y-2 pt-1 border-t border-slate-800 text-[10px] font-mono">
+                      <div className="text-[10px] font-bold tracking-wider text-amber-400 uppercase">
+                        BIO-TERRAMECHANICS (0.38g)
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">METABOLIC POWER:</span>
+                          <span className="text-amber-300 font-bold">{liveTelemetry.metabolicWatts} W</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
                           <div
                             className={`h-full rounded ${
-                              t > 80 ? 'bg-amber-400' : 'bg-amber-500/80'
+                              liveTelemetry.metabolicWatts > 420
+                                ? 'bg-rose-500'
+                                : liveTelemetry.metabolicWatts > 280
+                                ? 'bg-amber-400'
+                                : 'bg-emerald-400'
                             }`}
-                            style={{ width: `${t}%` }}
+                            style={{ width: `${Math.min(100, (liveTelemetry.metabolicWatts / 550) * 100)}%` }}
                           />
                         </div>
-                        <span className="text-slate-300 w-7 text-right">{t}%</span>
+                        <div className="text-[8px] text-slate-500">Santee-Pandolf (W=80kg, L=55kg, C_suit=+45W)</div>
                       </div>
-                    ))}
-                  </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">SUBLIMATOR COOLING:</span>
+                        <span className="text-cyan-300 font-bold">{liveTelemetry.waterBurnGph} g/h</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">THEMIS SOIL:</span>
+                        <span className="text-emerald-300 font-bold">
+                          {liveTelemetry.frictionMu >= 0.74 ? 'CLASS_A ROCK (η=1.0)' : 'CLASS_B SAND (η=1.2)'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -4447,6 +5214,147 @@ export default function MarsGlobeViewer() {
                   </svg>
                 </div>
               </div>
+
+              {/* ALGORITHM 1: PLSS TRI-EXPENDABLES (FEEDWATER, O2, LiOH, BATTERY) */}
+              {traverseMode === 'ASTRONAUT_HIKE' && (
+                <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2">
+                  <div className="flex justify-between items-center text-[10px] font-bold text-cyan-300 uppercase border-b border-slate-800 pb-1">
+                    <span>PLSS TRI-EXPENDABLES</span>
+                    <span className="text-[9px] font-mono text-amber-400">RULE OF HALF</span>
+                  </div>
+
+                  {/* Sublimator Cooling Water */}
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-mono">
+                      <span className="text-slate-400">FEEDWATER (H₂O):</span>
+                      <span className="text-cyan-300 font-bold">
+                        {liveTelemetry.waterReservePct}% ({liveTelemetry.waterBurnGph} g/h)
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
+                      <div
+                        className="h-full bg-cyan-400 rounded"
+                        style={{ width: `${liveTelemetry.waterReservePct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Primary O2 Tanks */}
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-mono">
+                      <span className="text-slate-400">PRIMARY O₂ (25 MPa):</span>
+                      <span className="text-emerald-300 font-bold">{liveTelemetry.o2ReservePct}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-400 rounded"
+                        style={{ width: `${liveTelemetry.o2ReservePct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* LiOH CO2 Scrubber */}
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-mono">
+                      <span className="text-slate-400">LiOH CO₂ SCRUBBER:</span>
+                      <span className="text-amber-300 font-bold">{liveTelemetry.liohReservePct}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
+                      <div
+                        className="h-full bg-amber-400 rounded"
+                        style={{ width: `${liveTelemetry.liohReservePct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Suit Pressure & Compliance Badge */}
+                  <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[9px] font-mono">
+                    <span className="text-slate-400">SUIT PRES: 29.65 kPa (4.3 psi)</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded font-bold ${
+                        activeRouteData?.ruleOfHalfCompliant ?? true
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
+                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
+                      }`}
+                    >
+                      {activeRouteData?.ruleOfHalfCompliant ?? true ? '50% RESERVE OK' : 'LIMIT EXCEEDED'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* FR-07: RAD-HAVEN ACTIVE HAVEN CARD */}
+              {isSpeAlertActive && speReport && (
+                <div className="bg-rose-950/80 border-2 border-rose-500 rounded-xl p-2.5 space-y-1.5 animate-in fade-in">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-rose-300 uppercase">
+                    <span className="flex items-center gap-1.5">
+                      <span className="animate-ping text-xs">⚡</span>
+                      <span>SPE RADIATION HAVEN</span>
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white font-mono text-[9px]">
+                      EVAC ACTIVE
+                    </span>
+                  </div>
+                  {speReport.bestHaven ? (
+                    <div className="space-y-1 text-[10px] font-mono">
+                      <div className="text-rose-100 font-bold">
+                        SHELTER: {speReport.bestHaven.name}
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 text-rose-200">
+                        <div>DIST: {speReport.bestHaven.distKm} km</div>
+                        <div>ETA: {speReport.bestHaven.evacTimeMin} min</div>
+                        <div>RELIEF: {speReport.bestHaven.reliefM}m CLIFF</div>
+                        <div>SHIELD: {Math.round(speReport.bestHaven.shieldingFraction * 100)}%</div>
+                      </div>
+                      <p className="text-[9px] text-rose-300/90 leading-tight pt-0.5">
+                        {speReport.tacticalInstruction}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] font-mono text-rose-200 leading-tight">
+                      No cliff alcove within 30-min radius. Descend into local depression.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* FR-09: RF COMMS BLACKOUT & LINE-OF-SIGHT CARD */}
+              {showRfCommsGrid && rfCommsReport && (
+                <div className="bg-[#0a1526] border border-cyan-500/70 rounded-xl p-2.5 space-y-1.5 animate-in fade-in">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-cyan-300 uppercase">
+                    <span>RF COMMS & RELAY LINK</span>
+                    <span
+                      className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-bold ${
+                        rfCommsReport.isBlackout
+                          ? 'bg-rose-600 text-white animate-pulse'
+                          : 'bg-emerald-500/30 text-emerald-300 border border-emerald-400/50'
+                      }`}
+                    >
+                      {rfCommsReport.isBlackout ? 'BLACKOUT' : 'LINK NOMINAL'}
+                    </span>
+                  </div>
+                  <div className="space-y-1 text-[10px] font-mono text-slate-300">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">EARTH DTE (DSN):</span>
+                      <span
+                        className={`font-bold ${
+                          !rfCommsReport.earthDte.isMaskedByTerrain ? 'text-cyan-300' : 'text-rose-400'
+                        }`}
+                      >
+                        {!rfCommsReport.earthDte.isMaskedByTerrain ? 'DIRECT LOS' : 'MASKED BY TERRAIN'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[9px] text-slate-400">
+                      <span>LATENCY: {rfCommsReport.earthDte.oneWayLatencyMin}m (ONE-WAY)</span>
+                      <span>ELEV: {rfCommsReport.earthDte.elevationDeg}°</span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-800 flex justify-between text-[9px]">
+                      <span>MRO (310km): {rfCommsReport.mro.isInView ? `${rfCommsReport.mro.signalStrengthPct}%` : 'HORIZON'}</span>
+                      <span>ODY (400km): {rfCommsReport.odyssey.isInView ? `${rfCommsReport.odyssey.signalStrengthPct}%` : 'HORIZON'}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Round-Trip Elevation Profile Chart */}
               {routingEnabled && activeRouteData && activeRouteData.isTraversable && (
