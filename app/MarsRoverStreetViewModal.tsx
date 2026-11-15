@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { Map, X, ZoomIn, ZoomOut, Compass, RotateCcw } from 'lucide-react';
 
 export interface RoverPanoramaStation {
   id: string;
@@ -684,95 +685,91 @@ export function MarsRoverStreetViewModal({
   const nextStation = allStationsForSite[(currentIdx + 1) % allStationsForSite.length];
   const zoomFactor = (65 / viewHud.fovDeg).toFixed(1);
 
+  // Mini-map coordinate normalization within current site bounding box
+  const minLat = Math.min(...allStationsForSite.map((s) => s.lat)) - 0.015;
+  const maxLat = Math.max(...allStationsForSite.map((s) => s.lat)) + 0.015;
+  const minLon = Math.min(...allStationsForSite.map((s) => s.lon)) - 0.015;
+  const maxLon = Math.max(...allStationsForSite.map((s) => s.lon)) + 0.015;
+
+  const getMiniMapPos = (lat: number, lon: number) => {
+    const x = ((lon - minLon) / (maxLon - minLon || 1)) * 100;
+    const y = ((maxLat - lat) / (maxLat - minLat || 1)) * 100;
+    return { x: Math.max(8, Math.min(92, x)), y: Math.max(8, Math.min(92, y)) };
+  };
+
+  const currentPin = getMiniMapPos(station.lat, station.lon);
+
   return (
-    <div className="absolute inset-0 z-30 bg-[#050912] flex flex-col overflow-hidden animate-in fade-in duration-200">
+    <div className="absolute inset-0 z-30 bg-[#050912] flex flex-col overflow-hidden animate-in fade-in duration-300">
       {/* =====================================================================
-          TOP STREET-VIEW TELEMETRY & COMPASS BAR
+          GOOGLE MAPS STYLE TOP-LEFT FLOATING STREET VIEW CARD
          ===================================================================== */}
-      <div className="h-11 bg-[#08101c]/95 border-b border-cyan-500/40 px-3.5 flex items-center justify-between z-20 shrink-0">
-        {/* Left: Rover & Camera Instrument Badge */}
-        <div className="flex items-center gap-2.5">
-          <div className="h-6 w-6 rounded bg-cyan-500/15 border border-cyan-400/60 flex items-center justify-center text-cyan-300">
-            <TacticalOpticIcon className="w-4 h-4" accentColor="#22d3ee" />
+      <div className="absolute top-3 left-3 z-40 flex items-center gap-2 pointer-events-auto">
+        {/* Google Maps Style Circular Back Button */}
+        <button
+          onClick={onClose}
+          className="h-10 w-10 rounded-full bg-[#08101c]/90 hover:bg-[#0f1b2f] border border-cyan-500/60 hover:border-cyan-400 text-cyan-300 hover:text-white flex items-center justify-center shadow-[0_4px_20px_rgba(0,0,0,0.7),0_0_15px_rgba(0,240,255,0.25)] transition-all cursor-pointer group"
+          title="Back to Mars Map (Esc)"
+        >
+          <span className="text-lg font-bold group-hover:-translate-x-0.5 transition-transform">←</span>
+        </button>
+
+        {/* Floating Station Title & Sol Badge */}
+        <div className="bg-[#08101c]/90 backdrop-blur-md border border-slate-700/80 rounded-xl px-3.5 py-1.5 shadow-[0_4px_20px_rgba(0,0,0,0.7)] flex flex-col">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-100 tracking-wide font-mono uppercase">
+              {station.code} • {station.title}
+            </span>
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 font-bold">
+              SOL {station.sol}
+            </span>
+            {isHdLoaded && (
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 font-bold hidden sm:inline">
+                ULTRA-HD
+              </span>
+            )}
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold tracking-wider uppercase text-cyan-200">
-                {station.code} • {station.title}
-              </span>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 font-bold">
-                SOL {station.sol}
-              </span>
-              <span
-                className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
-                  isHdLoaded
-                    ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
-                    : 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300'
-                }`}
-              >
-                {isHdLoaded ? `NASA ${station.piaId} • FULL-RES` : `NASA ${station.piaId} • STREAMING`}
-              </span>
-            </div>
-            <div className="text-[10px] font-mono text-slate-400 truncate max-w-md">
-              {station.roverName} • {station.instrument}
-            </div>
+          <div className="text-[10px] font-mono text-slate-400 truncate max-w-sm">
+            {station.roverName} • {station.instrument}
           </div>
         </div>
+      </div>
 
-        {/* Center: Live Azimuth Compass & Elevation Readout */}
-        <div className="hidden lg:flex items-center gap-3 bg-[#050a14] border border-slate-700/80 px-3 py-1 rounded font-mono text-[11px]">
+      {/* Top-Right Floating Heading & Reticle Info */}
+      <div className="absolute top-3 right-3 z-40 flex items-center gap-2 pointer-events-auto">
+        <div className="bg-[#08101c]/90 backdrop-blur-md border border-slate-700/80 rounded-xl px-3 py-1.5 font-mono text-[11px] text-slate-300 shadow-[0_4px_20px_rgba(0,0,0,0.7)] flex items-center gap-2.5">
           <div>
             <span className="text-slate-500 mr-1">HEADING:</span>
             <span className="text-cyan-300 font-bold">
-              {String(viewHud.azimuthDeg).padStart(3, '0')}°{' '}
-              {compassLabelFromAzimuth(viewHud.azimuthDeg)}
+              {String(viewHud.azimuthDeg).padStart(3, '0')}° {compassLabelFromAzimuth(viewHud.azimuthDeg)}
             </span>
           </div>
           <span className="text-slate-700">|</span>
           <div>
-            <span className="text-slate-500 mr-1">PITCH:</span>
-            <span className="text-slate-200 font-bold">
-              {viewHud.pitchDeg > 0 ? `+${viewHud.pitchDeg}` : viewHud.pitchDeg}°
-            </span>
-          </div>
-          <span className="text-slate-700">|</span>
-          <div>
-            <span className="text-slate-500 mr-1">OPTIC ZOOM:</span>
+            <span className="text-slate-500 mr-1">ZOOM:</span>
             <span className="text-amber-300 font-bold">{zoomFactor}x</span>
           </div>
         </div>
 
-        {/* Right: Auto-Scan & Exit Street View */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setAutoRotate((v) => !v)}
-            className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all border ${
-              autoRotate
-                ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 shadow-[0_0_10px_rgba(0,240,255,0.3)]'
-                : 'bg-slate-900/80 border-slate-700 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {autoRotate ? '360° AUTO-SCAN: ON' : '360° AUTO-SCAN'}
-          </button>
-          <button
-            onClick={onClose}
-            className="px-3 py-1 rounded text-[10px] font-mono font-bold uppercase bg-rose-950/85 hover:bg-rose-900 border border-rose-500/80 text-rose-200 shadow-[0_0_12px_rgba(244,63,94,0.3)] transition-all"
-          >
-            ✕ EXIT STREET VIEW
-          </button>
-        </div>
+        <button
+          onClick={onClose}
+          className="px-3 py-2 rounded-xl text-xs font-mono font-bold uppercase bg-rose-950/85 hover:bg-rose-900 border border-rose-500/80 text-rose-200 shadow-[0_4px_20px_rgba(0,0,0,0.7)] transition-all cursor-pointer flex items-center gap-1.5"
+        >
+          <X className="w-3.5 h-3.5" />
+          <span>CLOSE</span>
+        </button>
       </div>
 
       {/* =====================================================================
           INTERACTIVE 360° WEBGL SPHERE CANVAS
          ===================================================================== */}
-      <div className="relative flex-1 w-full overflow-hidden">
+      <div className="relative flex-1 w-full h-full overflow-hidden">
         <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
         {/* Subtle Center Optic Reticle Crosshair */}
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="w-7 h-7 rounded-full border border-cyan-400/25 flex items-center justify-center">
-            <div className="w-1 h-1 rounded-full bg-cyan-400/50" />
+          <div className="w-8 h-8 rounded-full border border-cyan-400/25 flex items-center justify-center">
+            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400/60" />
           </div>
         </div>
 
@@ -786,51 +783,127 @@ export function MarsRoverStreetViewModal({
           </div>
         )}
 
-        {/* Top-Left Rover Surface Localization & Chassis Attitude Card */}
-        <div className="pointer-events-none absolute top-3 left-3 bg-[#08101c]/88 backdrop-blur-md border border-slate-700/80 rounded-lg px-3 py-2 text-[10px] font-mono space-y-1 max-w-xs">
-          <div className="text-cyan-300 font-bold uppercase tracking-wider">
-            SURFACE TELEMETRY • {station.subtitle}
+        {/* ===================================================================
+            GOOGLE MAPS MINI-MAP RADAR WIDGET (BOTTOM-LEFT)
+           =================================================================== */}
+        <div className="absolute bottom-16 left-3 z-40 bg-[#08101c]/92 backdrop-blur-md border border-cyan-500/50 rounded-xl p-2 shadow-[0_8px_30px_rgba(0,0,0,0.8),0_0_20px_rgba(0,240,255,0.2)] pointer-events-auto">
+          <div className="flex items-center justify-between text-[9px] font-mono text-cyan-300 font-bold uppercase mb-1 border-b border-slate-800 pb-0.5">
+            <span className="flex items-center gap-1"><Map className="w-3 h-3 text-cyan-400" /> STREET VIEW RADAR</span>
+            <span className="text-slate-400">{allStationsForSite.length} PANS</span>
           </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-slate-300">
-            <div>
-              COORDS:{' '}
-              <span className="text-slate-100">
-                {Math.abs(station.lat).toFixed(4)}°{station.lat >= 0 ? 'N' : 'S'},{' '}
-                {station.lon.toFixed(4)}°E
-              </span>
+
+          {/* Mini-Map Surface Canvas */}
+          <div className="relative w-36 h-36 bg-[#040812] border border-slate-700/80 rounded-lg overflow-hidden">
+            {/* Terrain grid lines */}
+            <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:12px_12px]" />
+
+            {/* Other CAM station pins */}
+            {allStationsForSite.map((st) => {
+              if (st.id === station.id) return null;
+              const pos = getMiniMapPos(st.lat, st.lon);
+              return (
+                <button
+                  key={st.id}
+                  onClick={() => onSelectStation(st)}
+                  style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-slate-800 border border-slate-400 hover:border-cyan-400 hover:scale-125 hover:bg-cyan-500 transition-all cursor-pointer flex items-center justify-center text-[7px] text-white font-mono"
+                  title={`Jump to ${st.code}: ${st.title}`}
+                >
+                  ●
+                </button>
+              );
+            })}
+
+            {/* Current Active Camera Station Pin + Dynamic Rotating Vision Cone */}
+            <div
+              style={{ left: `${currentPin.x}%`, top: `${currentPin.y}%` }}
+              className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+            >
+              {/* Dynamic Rotating Google Maps Vision Cone */}
+              <svg
+                className="w-20 h-20 -translate-x-1/2 -translate-y-1/2 transition-transform duration-75"
+                style={{
+                  transform: `translate(-50%, -50%) rotate(${viewHud.azimuthDeg}deg)`,
+                }}
+                viewBox="0 0 100 100"
+              >
+                {/* Vision Cone Wedge */}
+                <path
+                  d="M 50 50 L 25 5 A 45 45 0 0 1 75 5 Z"
+                  fill="rgba(0, 240, 255, 0.32)"
+                  stroke="rgba(0, 240, 255, 0.7)"
+                  strokeWidth="1.2"
+                />
+              </svg>
+
+              {/* Pulsing Center Pin Dot */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-cyan-400 border border-white shadow-[0_0_8px_#00f0ff] animate-pulse" />
             </div>
-            <div>
-              ELEVATION: <span className="text-amber-300 font-bold">{station.elevM} m</span>
-            </div>
-            <div>
-              CHASSIS ROLL: <span className="text-slate-100">{station.rollDeg}°</span>
-            </div>
-            <div>
-              CHASSIS PITCH: <span className="text-slate-100">{station.pitchDeg}°</span>
-            </div>
-          </div>
-          <div className="text-[9px] text-slate-400 leading-relaxed pt-0.5 border-t border-slate-800">
-            {station.description}
           </div>
         </div>
 
-        {/* Bottom Street View Waypoint Stepper Bar */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-[#08101c]/92 backdrop-blur-md border border-slate-700/80 rounded-xl px-3 py-2 flex items-center gap-2 shadow-2xl z-20 max-w-[95%]">
+        {/* ===================================================================
+            GOOGLE MAPS STYLE VERTICAL ZOOM / PAN CONTROLS (BOTTOM-RIGHT)
+           =================================================================== */}
+        <div className="absolute bottom-16 right-3 z-40 flex flex-col gap-1.5 pointer-events-auto">
+          <div className="bg-[#08101c]/90 backdrop-blur-md border border-slate-700/80 rounded-xl overflow-hidden shadow-2xl flex flex-col divide-y divide-slate-800 font-mono text-sm">
+            <button
+              onClick={() => {
+                // Zoom In
+                const event = new WheelEvent('wheel', { deltaY: -120 });
+                window.dispatchEvent(event);
+              }}
+              className="w-9 h-9 flex items-center justify-center text-slate-200 hover:text-cyan-300 hover:bg-slate-800 transition-all font-bold cursor-pointer"
+              title="Zoom In"
+            >
+              +
+            </button>
+            <button
+              onClick={() => {
+                // Zoom Out
+                const event = new WheelEvent('wheel', { deltaY: 120 });
+                window.dispatchEvent(event);
+              }}
+              className="w-9 h-9 flex items-center justify-center text-slate-200 hover:text-cyan-300 hover:bg-slate-800 transition-all font-bold cursor-pointer"
+              title="Zoom Out"
+            >
+              −
+            </button>
+          </div>
+
+          <button
+            onClick={() => setAutoRotate((v) => !v)}
+            className={`w-9 h-9 rounded-xl border flex items-center justify-center text-xs font-mono transition-all shadow-2xl cursor-pointer ${
+              autoRotate
+                ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(0,240,255,0.4)]'
+                : 'bg-[#08101c]/90 border-slate-700/80 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+            }`}
+            title={autoRotate ? 'Stop 360° Auto-Scan' : 'Start 360° Auto-Scan'}
+          >
+            ↺
+          </button>
+        </div>
+
+        {/* ===================================================================
+            BOTTOM STREET VIEW THUMBNAIL STRIP & STEPPER
+           =================================================================== */}
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-[#08101c]/92 backdrop-blur-md border border-slate-700/80 rounded-xl px-3 py-1.5 flex items-center gap-2 shadow-2xl z-40 max-w-[95%] pointer-events-auto">
           <button
             onClick={() => onSelectStation(prevStation)}
-            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-slate-200 whitespace-nowrap transition-all"
+            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-slate-200 whitespace-nowrap transition-all cursor-pointer"
+            title="Previous 360° Panorama"
           >
-            ◀ PREV CAM
+            ◀ PREV
           </button>
 
-          <div className="flex items-center gap-1 overflow-x-auto px-1">
+          <div className="flex items-center gap-1.5 overflow-x-auto px-1 py-0.5">
             {allStationsForSite.map((st) => {
               const active = st.id === station.id;
               return (
                 <button
                   key={st.id}
                   onClick={() => onSelectStation(st)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono transition-all whitespace-nowrap border ${
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-all whitespace-nowrap border cursor-pointer ${
                     active
                       ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold shadow-[0_0_10px_rgba(0,240,255,0.3)]'
                       : 'bg-slate-900/70 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-600'
@@ -849,9 +922,10 @@ export function MarsRoverStreetViewModal({
 
           <button
             onClick={() => onSelectStation(nextStation)}
-            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-slate-200 whitespace-nowrap transition-all"
+            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-slate-200 whitespace-nowrap transition-all cursor-pointer"
+            title="Next 360° Panorama"
           >
-            NEXT CAM ▶
+            NEXT ▶
           </button>
         </div>
       </div>

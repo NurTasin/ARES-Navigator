@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import { Zap, X, AlertTriangle } from 'lucide-react';
 import type { RealMarsEphemeris } from '../MarsGlobeViewer';
 import type { SpeHavenReport } from '../algorithms/radHavenSpe';
 import type { RfCommsReport } from '../algorithms/rfComms';
@@ -128,7 +129,7 @@ export function VisorHudOverlay({
             <span className="font-bold uppercase">
               {traverseMode === 'ROVER_AUTOPILOT'
                 ? 'xEMU ROVER VISOR HUD // PILOT-1'
-                : 'xEMU SPACESUIT VISOR HUD // EV-1 LEAD'}
+                : 'xEMU SPACESUIT VISOR HUD // EV-1 LEAD: SADIA A. PUSPO (BGD)'}
             </span>
             <span className="text-cyan-500/60">|</span>
             <span className="text-amber-300 font-bold">
@@ -138,15 +139,17 @@ export function VisorHudOverlay({
 
           <div className="pointer-events-auto flex items-center gap-2">
             {speReport?.isAlertActive && (
-              <span className="px-2 py-0.5 rounded bg-rose-500/30 border border-rose-400 text-rose-200 text-[10px] font-bold animate-pulse">
-                ⚡ SPE PROTON ALERT ACTIVE
+              <span className="px-2 py-0.5 rounded bg-rose-500/30 border border-rose-400 text-rose-200 text-[10px] font-bold animate-pulse flex items-center gap-1">
+                <Zap className="w-3 h-3 text-amber-300" />
+                <span>SPE PROTON ALERT ACTIVE</span>
               </span>
             )}
             <button
               onClick={onClose}
-              className="px-3 py-1 rounded bg-slate-900/80 hover:bg-slate-800 border border-cyan-400/80 text-cyan-200 text-xs font-mono font-bold tracking-wider uppercase transition-all shadow-[0_0_12px_rgba(0,240,255,0.3)] hover:scale-105"
+              className="px-3 py-1 rounded bg-slate-900/80 hover:bg-slate-800 border border-cyan-400/80 text-cyan-200 text-xs font-mono font-bold tracking-wider uppercase transition-all shadow-[0_0_12px_rgba(0,240,255,0.3)] hover:scale-105 flex items-center gap-1.5"
             >
-              ✕ EXIT VISOR HUD [H]
+              <X className="w-3.5 h-3.5" />
+              <span>EXIT VISOR HUD [H]</span>
             </button>
           </div>
         </div>
@@ -227,7 +230,7 @@ export function VisorHudOverlay({
               />
             </div>
             <div className="text-[9px] font-mono text-slate-400 mt-0.5">
-              Santee-Pandolf (W=80kg, L=55kg, C_suit=+45W)
+              Santee-Pandolf (Sadia A. Puspo: W=62kg, PLSS=130kg, 0.38g)
             </div>
           </div>
 
@@ -405,8 +408,9 @@ export function VisorHudOverlay({
         {/* Destination Directive Banner */}
         <div className="bg-[#06101c]/90 backdrop-blur-md border border-cyan-500/50 px-6 py-2 rounded-xl flex items-center gap-6 shadow-[0_0_25px_rgba(0,240,255,0.25)] pointer-events-auto">
           {speReport?.isAlertActive && speReport.bestHaven ? (
-            <div className="flex items-center gap-3 text-rose-300 font-mono text-xs font-bold animate-pulse">
-              <span>⚠ EMERGENCY SPE EVACUATION:</span>
+            <div className="flex items-center gap-2 text-rose-300 font-mono text-xs font-bold animate-pulse">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>EMERGENCY SPE EVACUATION:</span>
               <span>
                 HEAD {String(Math.round(bearingToDestDeg || 0)).padStart(3, '0')}° • {speReport.bestHaven.distKm} KM TO {speReport.bestHaven.name} (ETA {speReport.bestHaven.evacTimeMin} MIN)
               </span>

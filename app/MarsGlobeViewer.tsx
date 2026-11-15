@@ -29,6 +29,44 @@ import {
   parseCoordinateQuery,
   type MarsLandmark,
 } from './data/marsLandmarks';
+import {
+  Globe,
+  Map as LucideMap,
+  Navigation,
+  Shield,
+  Zap,
+  Radio,
+  Clock,
+  Activity,
+  Info,
+  AlertTriangle,
+  Target,
+  Camera,
+  Search,
+  Sparkles,
+  Layers,
+  Eye,
+  Check,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
+  Sliders,
+  Loader2,
+  Crosshair,
+  Bot,
+  Download,
+  Sun,
+  FileText,
+} from 'lucide-react';
+import {
+  MarsTactical2DMap,
+  SCIENCE_TARGETS_DATABASE,
+  type ScienceTargetPOI,
+} from './components/MarsTactical2DMap';
+import { VisorHudOverlay } from './components/VisorHudOverlay';
+import { TraverseExportModal } from './components/TraverseExportModal';
+import { AresTacticalAiCopilot, type CopilotAction } from './components/AresTacticalAiCopilot';
 
 // ============================================================================
 // CONSTANTS & PLANETARY GEOMETRY
@@ -72,7 +110,7 @@ export interface ExpeditionSite {
 // ============================================================================
 // THE 4 HIGH-DETAIL EXPEDITION SITES
 // ============================================================================
-const EXPEDITION_SITES: ExpeditionSite[] = [
+export const EXPEDITION_SITES: ExpeditionSite[] = [
   {
     id: 'jezero-delta',
     code: 'A',
@@ -138,7 +176,7 @@ const EXPEDITION_SITES: ExpeditionSite[] = [
     color: '#f59e0b',
     roiBbox: [-173.65, 44.5, -168.75, 47.9],
     ctxLayer: 'Arcadia_Planitia_CTX_BlockAdj_dd',
-    ctxBbox: [-173.6451, 44.508, -171.0, 47.8921],
+    ctxBbox: [-173.6451, 44.508, -168.7549, 47.8921],
     defaultRoute: [46.08, -171.38, 46.32, -171.02],
   },
   {
@@ -162,6 +200,134 @@ const EXPEDITION_SITES: ExpeditionSite[] = [
     ctxLayer: 'Coprates_EMelas_Chasm_CTX_BlockAdj_dd',
     ctxBbox: [-71.7281, -13.392, -64.8715, -10.0079],
     defaultRoute: [-10.52, -68.32, -10.76, -67.98],
+  },
+];
+
+export interface PresetEvaRoute {
+  id: string;
+  name: string;
+  siteId: string;
+  category: 'SCIENCE_EXPEDITION' | 'SAMPLE_CACHE' | 'SURVIVAL_HAVEN' | 'GEOLOGY';
+  description: string;
+  startLat: number;
+  startLon: number;
+  endLat: number;
+  endLon: number;
+  scienceTarget: string;
+  scienceValueScore: number;
+}
+
+export const PRESET_EVA_ROUTES: PresetEvaRoute[] = [
+  // Mount Sharp (Gale Crater)
+  {
+    id: 'gale-boxwork',
+    name: '2025 Boxwork Formations EVA',
+    siteId: 'mount-sharp-gale',
+    category: 'SCIENCE_EXPEDITION',
+    description: "Follow Curiosity's 2025 discovery path across mineral-cemented boxwork fracture ridges.",
+    startLat: -4.685,
+    startLon: 137.408,
+    endLat: -4.732,
+    endLon: 137.395,
+    scienceTarget: 'Hydrothermal Boxwork Mineral Veins & Ancient Groundwater Habitability',
+    scienceValueScore: 100,
+  },
+  {
+    id: 'gale-marker-band',
+    name: 'Marker Band Valley Strata',
+    siteId: 'mount-sharp-gale',
+    category: 'GEOLOGY',
+    description: 'Ascend wave-rippled lakebed sedimentary strata on lower Mount Sharp pediment.',
+    startLat: -4.652,
+    startLon: 137.418,
+    endLat: -4.754,
+    endLon: 137.408,
+    scienceTarget: 'Wave-rippled sulfate sedimentary strata',
+    scienceValueScore: 95,
+  },
+  {
+    id: 'gale-greenheugh',
+    name: 'Greenheugh Pediment Traverse',
+    siteId: 'mount-sharp-gale',
+    category: 'GEOLOGY',
+    description: 'Traverse wind-sculpted gator-back sandstones on upper Mount Sharp pediment.',
+    startLat: -4.665,
+    startLon: 137.395,
+    endLat: -4.7125,
+    endLon: 137.3825,
+    scienceTarget: 'Eolian sandstone caprock & diagenetic hematite',
+    scienceValueScore: 92,
+  },
+
+  // Jezero Crater Delta Front
+  {
+    id: 'jez-delta-scarp',
+    name: 'Neretva Delta Scarp Ascent',
+    siteId: 'jezero-delta',
+    category: 'SCIENCE_EXPEDITION',
+    description: 'Climb from crater floor to the 40m river delta escarpment to sample fine clays.',
+    startLat: 18.4447,
+    startLon: 77.4508,
+    endLat: 18.4550,
+    endLon: 77.4120,
+    scienceTarget: 'Fluvial bottomset sandstones with carbonate cementation',
+    scienceValueScore: 98,
+  },
+  {
+    id: 'jez-three-forks',
+    name: 'Three Forks Sample Depot Check',
+    siteId: 'jezero-delta',
+    category: 'SAMPLE_CACHE',
+    description: 'Direct EVA traverse to verify the Mars Sample Return titanium cache tube depot.',
+    startLat: 18.4447,
+    startLon: 77.4508,
+    endLat: 18.4492,
+    endLon: 77.4318,
+    scienceTarget: 'Primary Mars Sample Return titanium tube cache depot',
+    scienceValueScore: 99,
+  },
+  {
+    id: 'jez-kodiak-butte',
+    name: 'Kodiak Butte Delta Remnant',
+    siteId: 'jezero-delta',
+    category: 'GEOLOGY',
+    description: 'Circumnavigate South Séítah dunes toward the isolated delta remnant mesa.',
+    startLat: 18.4447,
+    startLon: 77.4508,
+    endLat: 18.4180,
+    endLon: 77.4260,
+    scienceTarget: 'Layered magnesium carbonates & delta stratigraphy',
+    scienceValueScore: 94,
+  },
+
+  // Arcadia Planitia
+  {
+    id: 'arc-ice-well',
+    name: 'Glacial Sheet Ice Well Inspection',
+    siteId: 'arcadia-planitia',
+    category: 'SURVIVAL_HAVEN',
+    description: 'Traverse from ISRU basecamp to robotic thermal ice extraction well.',
+    startLat: 46.20,
+    startLon: -171.20,
+    endLat: 46.35,
+    endLon: -171.05,
+    scienceTarget: 'Subsurface sheet ice core (>90% water purity)',
+    scienceValueScore: 97,
+  },
+
+  // Melas Chasma
+  {
+    id: 'melas-cliff-haven',
+    name: 'Canyon Cliff SPE Shelter Route',
+    siteId: 'melas-chasma',
+    category: 'SURVIVAL_HAVEN',
+    description: 'Ingress corridor to deep 5 km rock overhang for cosmic ray and solar storm shielding.',
+    startLat: -10.65,
+    startLon: -68.15,
+    endLat: -10.45,
+    endLon: -68.35,
+    scienceTarget: 'Crustal flood basalt overhang (>85% radiation block)',
+    scienceValueScore: 95,
   },
 ];
 
@@ -1899,13 +2065,13 @@ function computeRoundTripSafeRoute(
             : `STEEP SCARP ${dispSlope}°`,
         lat: latAt(r),
         lon: lonAt(c),
-        elevM: elevArr[h.idx],
+        elevM: Math.round(elevArr[h.idx]),
         slopeDeg: dispSlope,
       });
     }
   });
 
-  const maxAllowedCellSlope = mode === 'ROVER_AUTOPILOT' ? 15.0 : 20.0;
+  const maxAllowedCellSlope = mode === 'ROVER_AUTOPILOT' ? 12.0 : 14.0;
 
   // Immediate endpoint check: if Start (A1) or Destination (B2) sits directly on an impassable cliff
   if (slopeArr[nodeA.idx] > maxAllowedCellSlope) {
@@ -2041,38 +2207,26 @@ function computeRoundTripSafeRoute(
         // STRICT HARD CONSTRAINTS (NO-GO MASK -> CONTINUE / INFINITY)
         // ====================================================================
         if (mode === 'ROVER_AUTOPILOT') {
-          // R1: Rover strictly forbidden from any segment > 15.0° slope
-          if (effSlopeDeg > 15.0) continue;
-          // R4: In low-friction sand traps (mu < 0.45), max safe slope drops to 10.0°
-          if (cellFric < 0.45 && effSlopeDeg > 10.0) continue;
+          // R1: Rover strictly forbidden from any segment > 12.0° slope (0.38g rollover danger)
+          if (effSlopeDeg > 12.0) continue;
+          // R4: In low-friction sand traps (mu < 0.48), max safe slope drops to 8.0°
+          if (cellFric < 0.48 && effSlopeDeg > 8.0) continue;
         } else {
-          // H1: Astronaut Hike strictly forbidden from uphill > +20.0° or downhill < -14.0°
-          if (signedPitchDeg > 20.0 || signedPitchDeg < -14.0 || cellSlope > 20.0) continue;
-          // H2: 1-ring cliff drop-off setback (>25° neighbor)
+          // H1: Astronaut Hike strictly forbidden from uphill > +14.0° or downhill < -12.0° (scarp tumble risk)
+          if (signedPitchDeg > 14.0 || signedPitchDeg < -12.0 || cellSlope > 14.0) continue;
+          // H2: 1-ring cliff drop-off setback (>22° neighbor)
           if (cliffNearArr[nIdx]) continue;
         }
 
         let edgeCost = stepKm;
 
-        if (mode === 'ROVER_AUTOPILOT') {
-          // Continuous cost factors for safe rover routing:
-          // Prefer gentler slopes, higher traction, and penalize steep descents slightly differently than climbs
-          const pitchFactor =
-            signedPitchDeg >= 0
-              ? 1.0 + Math.pow(effSlopeDeg / 8.0, 2.0) * 1.8
-              : 1.0 + Math.pow(effSlopeDeg / 7.0, 2.2) * 2.3; // Braking downhill on regolith requires gentler corridor
-          const slipPenalty = Math.max(0, (0.76 - cellFric) * 4.5);
-          edgeCost *= pitchFactor + slipPenalty;
-        } else {
-          // Continuous cost factors for Astronaut EVA Walk:
-          // Tobler's Martian metabolic oxygen expenditure + isohypse contouring
-          const tanTheta = dz / stepMeters;
-          const toblerFactor = Math.exp(3.5 * Math.abs(tanTheta + 0.05));
-          const downhillBrakingPenalty =
-            signedPitchDeg < -5.0 ? Math.pow(Math.abs(signedPitchDeg) / 8.0, 2.0) * 1.9 : 0;
-          const contourPenalty = (Math.abs(dz) / Math.max(10.0, stepMeters)) * 3.8;
-          edgeCost *= toblerFactor * 0.8 + downhillBrakingPenalty + contourPenalty;
-        }
+        // Heavy exponential slope penalty so pathfinder strictly seeks plainland, canyons, and flat passes:
+        const slopeAffinity = 1.0 + Math.pow(effSlopeDeg / 4.0, 3.2) * 3.2;
+        const climbPenalty = signedPitchDeg > 0 ? Math.pow(signedPitchDeg / 4.0, 2.5) * 2.5 : 0;
+        const downhillBraking = signedPitchDeg < -3.5 ? Math.pow(Math.abs(signedPitchDeg) / 3.5, 2.2) * 2.2 : 0;
+        const slipPenalty = Math.max(0, (0.76 - cellFric) * 5.0);
+
+        edgeCost *= slopeAffinity + climbPenalty + downhillBraking + slipPenalty;
 
         // For the Return Leg (B2 -> A1), gently encourage an independent return loop corridor
         // (while still allowing shared safe passes if a narrow canyon bottleneck is the only safe way)
@@ -2103,8 +2257,8 @@ function computeRoundTripSafeRoute(
       isTraversable: false,
       failureReason:
         mode === 'ROVER_AUTOPILOT'
-          ? 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Every corridor between A1 and B2 exceeds the 15.0° Rover Rollover Limit.'
-          : 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Blocked by >20° climbs, >14° descents, or >25° cliff scarps.',
+          ? 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Every corridor between A1 and B2 exceeds the 12.0° Rover Rollover Limit.'
+          : 'OUTBOUND LEG (A1 → B2) UNTRAVERSABLE: Blocked by >14° climbs, >12° descents, or cliff scarps.',
       outboundPoints: [],
       returnPoints: [],
       waypoints: [],
@@ -2130,8 +2284,8 @@ function computeRoundTripSafeRoute(
       isTraversable: false,
       failureReason:
         mode === 'ROVER_AUTOPILOT'
-          ? 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Cannot safely return from B2 to A1 without exceeding the 15.0° slope limit.'
-          : 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Outbound climb exceeds the -14.0° maximum safe downhill descent limit on return!',
+          ? 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Cannot safely return from B2 to A1 without exceeding the 12.0° slope limit.'
+          : 'RETURN LEG (B2 → A1) UNTRAVERSABLE: Outbound climb exceeds the -12.0° maximum safe downhill descent limit on return!',
       outboundPoints: [],
       returnPoints: [],
       waypoints: [],
@@ -2292,54 +2446,70 @@ function computeRoundTripSafeRoute(
   const startPt = outboundPoints[0];
   const endPt = outboundPoints[outboundPoints.length - 1];
 
+  const calcWaypointBio = (pt: typeof startPt) => {
+    const spd = Number(
+      Math.max(
+        1.2,
+        4.2 * Math.exp(-3.5 * Math.abs(Math.tan((pt.pitchDeg * Math.PI) / 180.0) + 0.04))
+      ).toFixed(1)
+    );
+    const bio = computeSanteePandolf038g(spd, pt.pitchDeg, pt.frictionMu);
+    return { speedKmh: spd, watts: bio.metabolicWatts };
+  };
+
+  const bioA1 = calcWaypointBio(startPt);
+  const bioA2 = calcWaypointBio(midOut);
+  const bioB2 = calcWaypointBio(endPt);
+  const bioR1 = calcWaypointBio(midRet);
+
   const waypoints: RouteWaypoint[] = [
     {
       id: 'A1',
       label: 'A1',
       lat: startPt.lat,
       lon: startPt.lon,
-      elevM: startPt.elevM,
-      slopeDeg: startPt.slopeDeg,
+      elevM: Math.round(startPt.elevM),
+      slopeDeg: Math.round(startPt.slopeDeg),
       frictionMu: startPt.frictionMu,
       distFromStartKm: 0,
-      metabolicWatts: 190,
-      speedKmh: 4.1,
+      metabolicWatts: bioA1.watts,
+      speedKmh: bioA1.speedKmh,
     },
     {
       id: 'A2',
       label: 'A2',
       lat: midOut.lat,
       lon: midOut.lon,
-      elevM: midOut.elevM,
-      slopeDeg: midOut.slopeDeg,
+      elevM: Math.round(midOut.elevM),
+      slopeDeg: Math.round(midOut.slopeDeg),
       frictionMu: midOut.frictionMu,
       distFromStartKm: Number((outboundDistKm * 0.5).toFixed(2)),
-      metabolicWatts: Math.round(180 + midOut.slopeDeg * 12),
-      speedKmh: Number(Math.max(1.2, 4.2 - midOut.slopeDeg * 0.14).toFixed(1)),
+      metabolicWatts: bioA2.watts,
+      speedKmh: bioA2.speedKmh,
     },
     {
       id: 'B2',
       label: 'B2',
       lat: endPt.lat,
       lon: endPt.lon,
-      elevM: endPt.elevM,
-      slopeDeg: endPt.slopeDeg,
+      elevM: Math.round(endPt.elevM),
+      slopeDeg: Math.round(endPt.slopeDeg),
       frictionMu: endPt.frictionMu,
       distFromStartKm: Number(outboundDistKm.toFixed(2)),
-      metabolicWatts: Math.round(180 + endPt.slopeDeg * 12),
-      speedKmh: Number(Math.max(1.2, 4.2 - endPt.slopeDeg * 0.14).toFixed(1)),
+      metabolicWatts: bioB2.watts,
+      speedKmh: bioB2.speedKmh,
     },
     {
       id: 'R1',
       label: 'R1',
       lat: midRet.lat,
       lon: midRet.lon,
-      elevM: midRet.elevM,
-      slopeDeg: midRet.slopeDeg,
+      elevM: Math.round(midRet.elevM),
+      slopeDeg: Math.round(midRet.slopeDeg),
       frictionMu: midRet.frictionMu,
       distFromStartKm: Number((outboundDistKm + returnDistKm * 0.5).toFixed(2)),
-      metabolicWatts: Math.round(180 + midRet.slopeDeg * 12),
-      speedKmh: Number(Math.max(1.2, 4.2 - midRet.slopeDeg * 0.14).toFixed(1)),
+      metabolicWatts: bioR1.watts,
+      speedKmh: bioR1.speedKmh,
     },
   ];
 
@@ -2473,10 +2643,21 @@ export default function MarsGlobeViewer() {
 
   // Routing State (with Option to Exit Routing Mode Completely!)
   const [routingEnabled, setRoutingEnabled] = useState<boolean>(true);
-  const [traverseMode, setTraverseMode] = useState<TraverseMode>('ROVER_AUTOPILOT');
-  const [leftPanelTab, setLeftPanelTab] = useState<'TELEMETRY' | 'ROUTE'>('ROUTE');
+  const [traverseMode, setTraverseMode] = useState<TraverseMode>('ASTRONAUT_HIKE');
   const [pickingMode, setPickingMode] = useState<PickingPointMode>('NONE');
   const [showReturnLeg, setShowReturnLeg] = useState<boolean>(true);
+
+  // Performance vs High Detail Upscaling Toggle
+  const [highDetailMode, setHighDetailMode] = useState<boolean>(true);
+
+  // Scene Loading Transition State
+  const [isSceneLoading, setIsSceneLoading] = useState<boolean>(false);
+
+  // Selected Science Target for on-map HUD card inspection
+  const [selectedScienceTarget, setSelectedScienceTarget] = useState<ScienceTargetPOI | null>(null);
+  const [projectedScienceTargets, setProjectedScienceTargets] = useState<
+    { target: ScienceTargetPOI; x: number; y: number; visible: boolean }[]
+  >([]);
 
   const [routeEndpoints, setRouteEndpoints] = useState<{
     startLat: number;
@@ -2512,6 +2693,48 @@ export default function MarsGlobeViewer() {
     computeRealMarsTimeAndSun(77.4508, 18.4447, 1763148000000)
   );
 
+  // Collapsible Sidebars & Header Dropdown States
+  const [leftPanelOpen, setLeftPanelOpen] = useState<boolean>(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState<boolean>(true);
+  const [siteDropdownOpen, setSiteDropdownOpen] = useState<boolean>(false);
+  const [layerDropdownOpen, setLayerDropdownOpen] = useState<boolean>(false);
+  const [safetyDropdownOpen, setSafetyDropdownOpen] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<'3D' | '2D'>('3D');
+
+  // Loading Overlay State when switching maps/layers
+  const [isMapSwitching, setIsMapSwitching] = useState<boolean>(false);
+  const [mapLoadingText, setMapLoadingText] = useState<string>('');
+
+  // Option A: NASA Mission Traverse Export Modal
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+
+  // Option B: Astronaut Visor / Cockpit First-Person Mode
+  const [isVisorMode, setIsVisorMode] = useState<boolean>(false);
+  const previousCamAltitudeRef = useRef<number>(2.4);
+  const previousCamTiltRef = useRef<number>(45);
+
+  // Text AI Agent Copilot
+  const [isAiCopilotOpen, setIsAiCopilotOpen] = useState<boolean>(false);
+
+  // Option C: Real-Time Solar Shadow & Sun Glare Hazard Vector
+  const [solarGlareHazard, setSolarGlareHazard] = useState<{
+    isHazard: boolean;
+    sunElevationDeg: number;
+    sunAzimuthDeg: number;
+    headingDiffDeg: number;
+    message: string;
+  }>({
+    isHazard: false,
+    sunElevationDeg: 28,
+    sunAzimuthDeg: 94,
+    headingDiffDeg: 45,
+    message: '',
+  });
+
+  // Option E: Elevation Profile Scrubbing & Walk Stress Simulator
+  const [simulatedProfileIndex, setSimulatedProfileIndex] = useState<number | null>(null);
+  const [isWalkSimRunning, setIsWalkSimRunning] = useState<boolean>(false);
+
   // FR-07: RAD-HAVEN Topographic Ray-Tracing & SPE Evacuation Router
   const [isSpeAlertActive, setIsSpeAlertActive] = useState<boolean>(false);
   const [speReport, setSpeReport] = useState<SpeHavenReport | null>(null);
@@ -2528,9 +2751,6 @@ export default function MarsGlobeViewer() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<MarsLandmark[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
-
-  // NASA Space Apps Challenge 2026 Directive & Mission Brief Modal
-  const [showChallengeModal, setShowChallengeModal] = useState<boolean>(false);
 
   // Live Telemetry & Inclinometer State
   const [maxRenderedZoom, setMaxRenderedZoom] = useState<number>(0);
@@ -2552,7 +2772,6 @@ export default function MarsGlobeViewer() {
     tractionPct: number;
     slipRiskPct: number;
     speedKmh: number;
-    wheelTorques: [number, number, number, number, number, number];
     o2SatPct: number;
     suitPressureKpa: number;
     heartRateBpm: number;
@@ -2580,7 +2799,6 @@ export default function MarsGlobeViewer() {
     tractionPct: 98,
     slipRiskPct: 12,
     speedKmh: 0.84,
-    wheelTorques: [86, 76, 76, 45, 35, 52],
     o2SatPct: 98,
     suitPressureKpa: 29.65, // Standard NASA 4.3 psi = 29.65 kPa
     heartRateBpm: 76,
@@ -2613,6 +2831,7 @@ export default function MarsGlobeViewer() {
   const spe3DGroupRef = useRef<THREE.Group | null>(null);
   const rf3DGroupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
   const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
   const sunMeshRef = useRef<THREE.Mesh | null>(null);
@@ -2669,11 +2888,41 @@ export default function MarsGlobeViewer() {
         setSunAzimuth(Math.round((ephem.subsolarLon + 360) % 360));
         setSunElevation(Math.round(ephem.subsolarLat));
       }
+
+      // Option C: Real-Time Solar Shadow & Sun Glare Hazard Vector
+      const sunElevDeg = 90.0 - (ephem.solarZenithDeg ?? 60.0);
+      const sunAzDeg = ephem.solarAzimuthDeg ?? 90.0;
+      const camHeading = Math.round(navStateRef.current.bearingDeg || 0);
+      let headingDiff = Math.abs(camHeading - sunAzDeg);
+      if (headingDiff > 180) headingDiff = 360 - headingDiff;
+      const isLowSun = sunElevDeg > 0 && sunElevDeg < 22;
+      const isBlinding = isLowSun && headingDiff < 32;
+      setSolarGlareHazard({
+        isHazard: isBlinding,
+        sunElevationDeg: Math.round(sunElevDeg),
+        sunAzimuthDeg: Math.round(sunAzDeg),
+        headingDiffDeg: Math.round(headingDiff),
+        message: isBlinding
+          ? `DIRECT LOW-SUN GLARE HAZARD: Low sun at ${Math.round(sunElevDeg)}° elevation (azimuth ${Math.round(sunAzDeg)}°). Gold electrochromic filter active.`
+          : '',
+      });
     };
     tickMarsClock();
     const timer = setInterval(tickMarsClock, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Option E: Step Simulation Timer for Elevation Scrub & Biometrics
+  useEffect(() => {
+    if (!isWalkSimRunning || !activeRouteData || activeRouteData.profile.length === 0) return;
+    const interval = setInterval(() => {
+      setSimulatedProfileIndex((prev) => {
+        const next = (prev === null ? 0 : prev + 1) % activeRouteData.profile.length;
+        return next;
+      });
+    }, 700);
+    return () => clearInterval(interval);
+  }, [isWalkSimRunning, activeRouteData]);
 
   // 3D Mesh Generator for Algorithm 2: Walkback Isochrone
   const updateIsochrone3DMeshes = useCallback(
@@ -2688,7 +2937,7 @@ export default function MarsGlobeViewer() {
         child.geometry?.dispose();
       }
 
-      if (!showWalkbackIsochrone || !isochrone || !routingEnabled) return;
+      if (!showWalkbackIsochrone || !isochrone) return;
 
       const pts3D = isochrone.safeBoundaryPoints.map((p) => {
         const rad = elevationMetersToRadius(p.elevM, paramsRef.current.exaggeration) + 0.00022;
@@ -2720,7 +2969,7 @@ export default function MarsGlobeViewer() {
       });
       group.add(new THREE.Mesh(glowGeom, glowMat));
     },
-    [routingEnabled, showWalkbackIsochrone]
+    [showWalkbackIsochrone]
   );
 
   // 3D Mesh Generator for FR-07: RAD-HAVEN Evacuation Route & Cliff Shelter
@@ -2811,21 +3060,43 @@ export default function MarsGlobeViewer() {
 
       const originElev = terrainField.getElevationMeters(report.surfaceLat, report.surfaceLon);
       const originRad =
-        elevationMetersToRadius(originElev, paramsRef.current.exaggeration) + 0.02;
+        elevationMetersToRadius(originElev, paramsRef.current.exaggeration) + 0.002;
       const originPos = latLonToVector3(report.surfaceLat, report.surfaceLon, originRad);
 
+      // Local topocentric orientation vectors (Up, North, East)
+      const up = originPos.clone().normalize();
+      const latRad = (report.surfaceLat * Math.PI) / 180.0;
+      const lonRad = (report.surfaceLon * Math.PI) / 180.0;
+      const north = new THREE.Vector3(
+        -Math.sin(latRad) * Math.sin(lonRad),
+        Math.cos(latRad),
+        -Math.sin(latRad) * Math.cos(lonRad)
+      ).normalize();
+      const east = new THREE.Vector3().crossVectors(north, up).normalize();
+
+      const computeSkyTarget = (elevDeg: number, azDeg: number, dist: number) => {
+        const elRad = (elevDeg * Math.PI) / 180.0;
+        const azRad = (azDeg * Math.PI) / 180.0;
+        const dir = new THREE.Vector3()
+          .addScaledVector(north, Math.cos(elRad) * Math.cos(azRad))
+          .addScaledVector(east, Math.cos(elRad) * Math.sin(azRad))
+          .addScaledVector(up, Math.sin(elRad))
+          .normalize();
+        return originPos.clone().addScaledVector(dir, dist);
+      };
+
       // Direct-to-Earth Vector Beam
-      const earthBeamDist = 18.0;
-      const earthTarget = latLonToVector3(
+      const earthBeamDist = 0.45;
+      const earthTarget = computeSkyTarget(
         report.earthDte.elevationDeg,
         report.earthDte.azimuthDeg,
-        originRad + earthBeamDist
+        earthBeamDist
       );
       const earthLineGeom = new THREE.BufferGeometry().setFromPoints([originPos, earthTarget]);
       const earthLineMat = new THREE.LineDashedMaterial({
         color: !report.earthDte.isMaskedByTerrain ? 0x00f0ff : 0xf43f5e,
-        dashSize: 0.4,
-        gapSize: 0.2,
+        dashSize: 0.02,
+        gapSize: 0.01,
         transparent: true,
         opacity: 0.85,
       });
@@ -2837,13 +3108,13 @@ export default function MarsGlobeViewer() {
       const orbiters = [report.mro, report.odyssey];
       for (const orb of orbiters) {
         if (!orb.isInView) continue;
-        const orbDist = 14.0;
-        const orbPos = latLonToVector3(orb.elevationDeg, orb.azimuthDeg, originRad + orbDist);
+        const orbDist = 0.35;
+        const orbPos = computeSkyTarget(orb.elevationDeg, orb.azimuthDeg, orbDist);
         const orbLineGeom = new THREE.BufferGeometry().setFromPoints([originPos, orbPos]);
         const orbLineMat = new THREE.LineDashedMaterial({
           color: !orb.isMaskedByTerrain ? 0x10b981 : 0xf59e0b,
-          dashSize: 0.3,
-          gapSize: 0.15,
+          dashSize: 0.015,
+          gapSize: 0.01,
           transparent: true,
           opacity: 0.75,
         });
@@ -2980,12 +3251,24 @@ export default function MarsGlobeViewer() {
     if (showReturnLeg) {
       buildLegTube(routeData.returnPoints, 0xf59e0b, legOffset + 0.00005, tubeR * 0.88);
     }
+  }, [
+    routeEndpoints,
+    routingEnabled,
+    showReturnLeg,
+    traverseMode,
+  ]);
 
-    // ALGORITHM 2: Dynamic Walkback Isochrone Generator (NASA EVA Rule of Half)
-    if (traverseMode === 'ASTRONAUT_HIKE' && showWalkbackIsochrone) {
+  // Dedicated Walkback Isochrone recalculation whenever toggled, endpoints change, or site changes
+  useEffect(() => {
+    const terrainField = terrainFieldRef.current;
+    if (!terrainField) return;
+
+    if (showWalkbackIsochrone) {
+      const centerLat = routingEnabled ? routeEndpoints.startLat : selectedSite.lat;
+      const centerLon = routingEnabled ? routeEndpoints.startLon : selectedSite.lon;
       const isochrone = computeWalkbackIsochrone(
-        routeEndpoints.startLat,
-        routeEndpoints.startLon,
+        centerLat,
+        centerLon,
         terrainField,
         4.5,
         5.0
@@ -2997,12 +3280,13 @@ export default function MarsGlobeViewer() {
       updateIsochrone3DMeshes(null);
     }
   }, [
-    routeEndpoints,
-    routingEnabled,
-    showReturnLeg,
     showWalkbackIsochrone,
-    traverseMode,
+    routingEnabled,
+    routeEndpoints.startLat,
+    routeEndpoints.startLon,
+    selectedSite,
     updateIsochrone3DMeshes,
+    demVersion,
   ]);
 
   useEffect(() => {
@@ -3242,18 +3526,52 @@ export default function MarsGlobeViewer() {
       endLat: -4.732,
       endLon: 137.395,
     });
-    setShowChallengeModal(false);
   }, []);
+
+  const applyPresetEvaRoute = useCallback((route: PresetEvaRoute) => {
+    const site = EXPEDITION_SITES.find((s) => s.id === route.siteId);
+    if (site && site.id !== selectedSite.id) {
+      setSelectedSite(site);
+      terrainFieldRef.current?.ensureSiteMasterDemLoaded(site);
+    }
+    const nav = navStateRef.current;
+    nav.targetLat = (route.startLat + route.endLat) * 0.5;
+    nav.targetLon = normalizeLon((route.startLon + route.endLon) * 0.5);
+    nav.targetAltitude = (22 / MARS_RADIUS_KM) * GLOBE_RADIUS;
+    nav.targetTiltDeg = 45;
+    nav.targetBearingDeg = 42;
+    setIsGlobalCommandView(false);
+
+    setRoutingEnabled(true);
+    setTraverseMode('ASTRONAUT_HIKE');
+    setRouteEndpoints({
+      startLat: route.startLat,
+      startLon: route.startLon,
+      endLat: route.endLat,
+      endLon: route.endLon,
+    });
+    setPickingMode('NONE');
+  }, [selectedSite]);
 
   const openRoverStreetView = useCallback((station: RoverPanoramaStation) => {
     const nav = navStateRef.current;
     nav.targetLat = station.lat;
     nav.targetLon = normalizeLon(station.lon);
-    nav.targetAltitude = (14 / MARS_RADIUS_KM) * GLOBE_RADIUS;
-    nav.targetTiltDeg = 52;
+    nav.targetAltitude = (2.2 / MARS_RADIUS_KM) * GLOBE_RADIUS; // Swoop camera directly down to ground station
+    nav.targetTiltDeg = 68;
     setIsGlobalCommandView(false);
-    setActiveStreetViewStation(station);
+    // Smooth Google Maps dive transition: allow camera to swoop down before opening 360° view
+    setTimeout(() => {
+      setActiveStreetViewStation(station);
+    }, 450);
   }, []);
+
+  const closeRoverStreetView = useCallback(() => {
+    setActiveStreetViewStation(null);
+    const nav = navStateRef.current;
+    nav.targetAltitude = (selectedSite.targetAltitudeKm / MARS_RADIUS_KM) * GLOBE_RADIUS;
+    nav.targetTiltDeg = selectedSite.targetTiltDeg;
+  }, [selectedSite]);
 
   const toggleGlobalCommandView = useCallback(
     (toGlobal: boolean) => {
@@ -3273,6 +3591,19 @@ export default function MarsGlobeViewer() {
   );
 
   const handleLayerModeChange = (newMode: VisualLayerMode) => {
+    setIsMapSwitching(true);
+    const label =
+      newMode === 'realistic'
+        ? 'SYNCHRONIZING HiRISE 25cm TRUE OPTICAL MOSAIC...'
+        : newMode === 'slope_radar'
+        ? 'COMPUTING 0.38g ANTI-ROLLOVER SLOPE RADAR...'
+        : newMode === 'tactical_contour'
+        ? 'GENERATING DTM ISO-ELEVATION CONTOURS...'
+        : newMode === 'color_hillshade'
+        ? 'FUSING MOLA COLOR TOPOGRAPHY & SHADED RELIEF...'
+        : 'PROCESSING ORBITAL DATA...';
+    setMapLoadingText(label);
+
     setLayerMode(newMode);
     paramsRef.current.layerMode = newMode;
 
@@ -3283,6 +3614,86 @@ export default function MarsGlobeViewer() {
       }
     };
     rootsRef.current.forEach(applyModeToTree);
+    setTimeout(() => {
+      setIsMapSwitching(false);
+    }, 450);
+  };
+
+  const handleViewModeSwitch = (newView: '3D' | '2D') => {
+    if (newView === viewMode && !isVisorMode) return;
+    setIsMapSwitching(true);
+    if (isVisorMode) {
+      setIsVisorMode(false);
+    }
+    setMapLoadingText(
+      newView === '2D'
+        ? 'INITIALIZING MARS TREK WMS PLANIMETRIC MOSAIC...'
+        : 'SYNCHRONIZING HiRISE 1.0m STEREO DTM ELEVATION MESH...'
+    );
+    setViewMode(newView);
+    setTimeout(() => {
+      setIsMapSwitching(false);
+    }, 600);
+  };
+
+  const toggleVisorMode = () => {
+    if (!isVisorMode) {
+      previousCamAltitudeRef.current = navStateRef.current.altitude;
+      previousCamTiltRef.current = navStateRef.current.tiltDeg;
+      setIsMapSwitching(true);
+      setMapLoadingText('INITIALIZING xEMU SPACESUIT VISOR HUD TELEMETRY...');
+      setViewMode('3D');
+      // Drop camera to ground level right at the start point A1 or focus center
+      const targetLat = routeEndpoints.startLat || navStateRef.current.focusLat;
+      const targetLon = routeEndpoints.startLon || navStateRef.current.focusLon;
+      navStateRef.current.focusLat = targetLat;
+      navStateRef.current.focusLon = targetLon;
+      navStateRef.current.altitude = 0.08; // 1.8m human eye level above ground
+      navStateRef.current.tiltDeg = 82; // horizontal gaze across Martian scarp
+      setIsVisorMode(true);
+      setTimeout(() => {
+        setIsMapSwitching(false);
+      }, 500);
+    } else {
+      setIsMapSwitching(true);
+      setMapLoadingText('REVERTING TO ORBITAL TACTICAL 3D COMMAND VIEW...');
+      navStateRef.current.altitude = previousCamAltitudeRef.current || 2.4;
+      navStateRef.current.tiltDeg = previousCamTiltRef.current || 45;
+      setIsVisorMode(false);
+      setTimeout(() => {
+        setIsMapSwitching(false);
+      }, 450);
+    }
+  };
+
+  const handleCopilotCommand = (cmd: CopilotAction) => {
+    switch (cmd.action) {
+      case 'PLOT_PRESET': {
+        const preset = PRESET_EVA_ROUTES.find((p) => p.id === cmd.payload) || PRESET_EVA_ROUTES[0];
+        if (preset) {
+          applyPresetEvaRoute(preset);
+        }
+        break;
+      }
+      case 'SET_VIEW_MODE':
+        handleViewModeSwitch(cmd.payload);
+        break;
+      case 'SET_LAYER_MODE':
+        handleLayerModeChange(cmd.payload as VisualLayerMode);
+        break;
+      case 'ENTER_VISOR':
+        toggleVisorMode();
+        break;
+      case 'OPEN_EXPORT':
+        setIsExportModalOpen(true);
+        break;
+      case 'TOGGLE_SPE':
+        handleToggleSpeAlert();
+        break;
+      case 'SET_TRAVERSE_MODE':
+        setTraverseMode(cmd.payload);
+        break;
+    }
   };
 
   // Helper to check if mouse cursor is near a screen coordinate (to auto-hide legends when inspecting routes!)
@@ -3342,6 +3753,7 @@ export default function MarsGlobeViewer() {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.25;
     container.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
 
     // Higher hemisphere ambient fill so even night-side Mars remains inspectable when synced with real Mars time
     const hemiLight = new THREE.HemisphereLight(0xffe6d0, 0x6b442e, 1.15);
@@ -3707,7 +4119,35 @@ export default function MarsGlobeViewer() {
       }
     };
 
-    const preventContext = (e: MouseEvent) => e.preventDefault();
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouseNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouseNDC, camera);
+      const hits = raycaster.intersectObjects(tileGroup.children, false);
+      if (hits.length > 0) {
+        const hitLatLon = vector3ToLatLon(hits[0].point);
+        setRoutingEnabled(true);
+        if (e.shiftKey) {
+          // Shift + Right-Click sets Start (A1)
+          setRouteEndpoints((prev) => ({
+            ...prev,
+            startLat: clampLat(hitLatLon.lat),
+            startLon: normalizeLon(hitLatLon.lon),
+          }));
+        } else {
+          // Right-Click sets Destination (B2) seamlessly!
+          setRouteEndpoints((prev) => ({
+            ...prev,
+            endLat: clampLat(hitLatLon.lat),
+            endLon: normalizeLon(hitLatLon.lon),
+          }));
+        }
+        setPickingMode('NONE');
+      }
+    };
 
     const domEl = renderer.domElement;
     domEl.addEventListener('pointerdown', onPointerDown);
@@ -3716,7 +4156,7 @@ export default function MarsGlobeViewer() {
     domEl.addEventListener('pointerup', onPointerUp);
     domEl.addEventListener('wheel', onWheel, { passive: false });
     domEl.addEventListener('dblclick', onDoubleClick);
-    domEl.addEventListener('contextmenu', preventContext);
+    domEl.addEventListener('contextmenu', onContextMenu);
 
     const updateSphericalCamera = (): THREE.Vector3 => {
       const nav = navStateRef.current;
@@ -3801,6 +4241,11 @@ export default function MarsGlobeViewer() {
         group.position.copy(pos3D);
         group.lookAt(pos3D.clone().add(normal));
 
+        // Auto-hide giant 3D beacon stems and pulse rings when low altitude (< 16.0) to keep crater terrain clean!
+        const nav = navStateRef.current;
+        const isOrbitalView = nav.altitude > 16.0;
+        group.visible = isOrbitalView;
+
         const distToCam = camPos.distanceTo(pos3D);
         const beaconScale = Math.max(0.025, Math.min(3.2, distToCam * 0.022));
         group.scale.setScalar(beaconScale);
@@ -3823,11 +4268,13 @@ export default function MarsGlobeViewer() {
           screenY >= -40 &&
           screenY <= h + 40;
 
+        // Hide 2D site badge when inside this site to avoid blocking rover route lines
+        const showBadge = isOrbitalView || site.id !== selectedSite.id;
         newProjected.push({
           site,
           x: screenX,
           y: screenY,
-          visible: inScreen,
+          visible: inScreen && showBadge,
           distKm: (distToCam / GLOBE_RADIUS) * MARS_RADIUS_KM,
         });
       }
@@ -3964,19 +4411,6 @@ export default function MarsGlobeViewer() {
           Math.max(0.45, 3.8 * (1 - slopeDeg / 28) * (frictionMu / 0.75)).toFixed(2)
         );
 
-        const baseT = 52 + slopeDeg * 1.8;
-        const pShift = pitchDeg * 1.6;
-        const rShift = rollDeg * 1.4;
-        const clampT = (v: number) => Math.min(98, Math.max(22, Math.round(v)));
-        const wheelTorques: [number, number, number, number, number, number] = [
-          clampT(baseT + pShift + rShift),
-          clampT(baseT + pShift - rShift),
-          clampT(baseT + rShift * 0.8),
-          clampT(baseT - rShift * 0.8),
-          clampT(baseT - pShift + rShift),
-          clampT(baseT - pShift - rShift),
-        ];
-
         const atmosPresPa = Math.round(610 * Math.exp(-elevM / 11100));
         const ephemNow = computeRealMarsTimeAndSun(nav.focusLon);
         const sunDot = Math.cos(((ephemNow.localHourFloat - 12.5) * Math.PI) / 12);
@@ -4005,7 +4439,6 @@ export default function MarsGlobeViewer() {
           tractionPct,
           slipRiskPct,
           speedKmh,
-          wheelTorques,
           o2SatPct: 98,
           suitPressureKpa: 29.65, // Standard NASA 4.3 psi = 29.65 kPa
           heartRateBpm: Math.min(148, Math.round(72 + slopeDeg * 2.4)),
@@ -4045,29 +4478,71 @@ export default function MarsGlobeViewer() {
       if (!containerRef.current) return;
       const w = containerRef.current.clientWidth;
       const h = containerRef.current.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      if (w > 0 && h > 0) {
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }
     };
     window.addEventListener('resize', handleResize);
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(width, height);
+        }
+      }
+    });
+    if (container) {
+      resizeObserver.observe(container);
+    }
 
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       domEl.removeEventListener('pointerdown', onPointerDown);
       domEl.removeEventListener('pointermove', onPointerMove);
       domEl.removeEventListener('pointerleave', onPointerLeave);
       domEl.removeEventListener('pointerup', onPointerUp);
       domEl.removeEventListener('wheel', onWheel);
       domEl.removeEventListener('dblclick', onDoubleClick);
-      domEl.removeEventListener('contextmenu', preventContext);
+      domEl.removeEventListener('contextmenu', onContextMenu);
       rootsRef.current.forEach((r) => r.dispose(tileGroup));
       renderer.dispose();
+      rendererRef.current = null;
       if (container.contains(domEl)) {
         container.removeChild(domEl);
       }
     };
   }, []);
+
+  // Force Three.js viewport resize when sidebars collapse/expand or view mode switches
+  useEffect(() => {
+    const handlePanelChange = () => {
+      const container = containerRef.current;
+      const camera = cameraRef.current;
+      const renderer = rendererRef.current;
+      if (!container || !camera || !renderer) return;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      if (w > 0 && h > 0) {
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }
+    };
+    handlePanelChange();
+    const t1 = setTimeout(handlePanelChange, 25);
+    const t2 = setTimeout(handlePanelChange, 120);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [leftPanelOpen, rightPanelOpen, viewMode]);
 
       // Project Waypoints, Hazard Badges, and 360° Rover Panorama Optic Stations to 2D Screen
   useEffect(() => {
@@ -4100,11 +4575,12 @@ export default function MarsGlobeViewer() {
         return { x, y, visible };
       };
 
-      // 1. Project 360° Rover Panorama Optic Stations
+      // 1. Project 360° Rover Panorama Optic Stations (Local to current site only)
       if (showPanoMarkers) {
         const panoList: { station: RoverPanoramaStation; x: number; y: number; visible: boolean }[] =
           [];
         for (const st of ROVER_PANORAMA_STATIONS) {
+          if (st.siteId !== selectedSite.id) continue;
           const { x, y, visible } = projectLatLon(st.lat, st.lon, 0.0035);
           panoList.push({ station: st, x, y, visible });
         }
@@ -4128,10 +4604,6 @@ export default function MarsGlobeViewer() {
           tags.push({
             id: `wp-${wp.id}`,
             text: wp.label,
-            subtext:
-              wp.id === 'A1'
-                ? `ROUND-TRIP SAFE • ${wp.metabolicWatts}W / ${wp.speedKmh} km/h`
-                : undefined,
             kind: 'WAYPOINT',
             color: wp.id === 'B2' ? '#ef4444' : wp.id === 'R1' ? '#f59e0b' : '#00f0ff',
             x,
@@ -4177,10 +4649,29 @@ export default function MarsGlobeViewer() {
       }
 
       setProjectedRouteTags(tags);
+
+      // 3. Project Science Targets on 3D Globe
+      const siteScience = SCIENCE_TARGETS_DATABASE.filter(
+        (st) => st.siteId === selectedSite.id
+      );
+      const sciList: { target: ScienceTargetPOI; x: number; y: number; visible: boolean }[] = [];
+      for (const st of siteScience) {
+        const { x, y, visible } = projectLatLon(st.lat, st.lon, 0.0032);
+        sciList.push({ target: st, x, y, visible });
+      }
+      setProjectedScienceTargets(sciList);
     }, 80);
 
     return () => clearInterval(interval);
-  }, [activeRouteData, exaggeration, routeEndpoints, routingEnabled, showPanoMarkers, showReturnLeg]);
+  }, [
+    activeRouteData,
+    exaggeration,
+    routeEndpoints,
+    routingEnabled,
+    selectedSite.id,
+    showPanoMarkers,
+    showReturnLeg,
+  ]);
 
   // Display accurate Mission Sol for current site (Curiosity Sol for Gale Crater, Perseverance Sol for Jezero & Mars 2020)
   const displayedSolNumber =
@@ -4193,36 +4684,85 @@ export default function MarsGlobeViewer() {
   return (
     <div className="relative w-full h-screen bg-[#05080f] text-slate-100 overflow-hidden font-sans select-none p-2 md:p-3 flex flex-col">
       <div className="relative flex-1 w-full h-full rounded-2xl border-2 border-slate-700/80 bg-[#070b12] shadow-[inset_0_0_50px_rgba(0,0,0,0.9),0_0_30px_rgba(0,240,255,0.08)] overflow-hidden flex flex-col">
+        {/* Click-outside backdrop to dismiss any open header dropdown */}
+        {(siteDropdownOpen || layerDropdownOpen || safetyDropdownOpen) && (
+          <div
+            onClick={() => {
+              setSiteDropdownOpen(false);
+              setLayerDropdownOpen(false);
+              setSafetyDropdownOpen(false);
+            }}
+            className="fixed inset-0 z-35 bg-transparent"
+          />
+        )}
+
         {/* ===================================================================
             TOP TACTICAL COMMAND HEADER BAR
            =================================================================== */}
-        <header className="h-12 bg-[#0b101b]/95 border-b border-slate-700/80 px-4 flex items-center justify-between z-20 shrink-0">
-          {/* Left: System Title & FR-03 Search Bar */}
-          <div className="flex items-center gap-3">
-            <div className="h-7 w-7 rounded bg-amber-500/15 border border-amber-500/60 flex items-center justify-center text-amber-400 font-bold text-sm">
+        <header className="h-12 bg-[#0b101b]/95 border-b border-slate-700/80 px-3 flex items-center justify-between z-40 relative shrink-0 gap-2">
+          {/* Left: System Title, Site Dropdown & FR-03 Search Bar */}
+          <div className="flex items-center gap-2.5">
+            <div className="h-7 w-7 rounded bg-amber-500/15 border border-amber-500/60 flex items-center justify-center text-amber-400 font-bold text-sm shrink-0">
               ▲
             </div>
-            <div className="flex items-center gap-2 text-xs md:text-sm tracking-wider font-bold uppercase">
-              <span className="text-slate-100">
-                {layerMode === 'slope_radar' ? 'DYNAMIC SLOPE RADAR' : 'ARES-NAVIGATOR'}
+            <div className="hidden sm:flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-xs md:text-sm font-bold tracking-wider uppercase text-slate-100">
+                ARES-NAVIGATOR
               </span>
-              <span className="text-slate-600 hidden xl:inline">|</span>
-              <span className="text-slate-400 font-mono text-xs hidden xl:inline">
-                {isGlobalCommandView
-                  ? 'GLOBAL MARS COMMAND'
-                  : routingEnabled
-                  ? 'ROUND-TRIP ROUTE PLANNER'
-                  : 'FREE EXPLORATION'}
-              </span>
+            </div>
+
+            {/* Site Switcher Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setSiteDropdownOpen(!siteDropdownOpen);
+                  setLayerDropdownOpen(false);
+                  setSafetyDropdownOpen(false);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#070e1b] hover:bg-[#0d182e] border border-cyan-500/50 hover:border-cyan-400 text-cyan-200 text-xs font-mono font-bold transition-all cursor-pointer shadow-xs"
+                title="Select Expedition Site"
+              >
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: selectedSite.color }}
+                />
+                <span className="max-w-[120px] truncate">{selectedSite.shortLabel}</span>
+                <span className="text-[9px] text-slate-400">▾</span>
+              </button>
+              {siteDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 w-60 bg-[#08101d]/98 border border-cyan-500/60 rounded-xl shadow-2xl p-1 z-50 divide-y divide-slate-800">
+                  {EXPEDITION_SITES.map((site) => (
+                    <button
+                      key={site.id}
+                      onClick={() => {
+                        flyToExpeditionSite(site);
+                        setSiteDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 text-xs font-mono rounded flex items-center gap-2 hover:bg-cyan-500/20 transition-all cursor-pointer ${
+                        selectedSite.id === site.id ? 'text-cyan-300 font-bold bg-cyan-950/40' : 'text-slate-300'
+                      }`}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: site.color }}
+                      />
+                      <div className="truncate">
+                        <div className="font-bold">{site.shortLabel}</div>
+                        <div className="text-[9px] text-slate-500 truncate">{site.role}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* FR-03: Mars Landmark & Coordinate Search Bar */}
             <div className="relative hidden md:block">
-              <div className="flex items-center bg-[#060c16] border border-slate-700 hover:border-cyan-500/70 focus-within:border-cyan-400 rounded px-2 py-0.5 transition-all w-44 lg:w-60">
-                <span className="text-slate-400 text-xs mr-1.5">🔍</span>
+              <div className="flex items-center bg-[#060c16] border border-slate-700 hover:border-cyan-500/70 focus-within:border-cyan-400 rounded px-2 py-0.5 transition-all w-32 lg:w-44">
+                <Search className="w-3 h-3 text-slate-400 mr-1.5 shrink-0" />
                 <input
                   type="text"
-                  placeholder="Crater, Boxwork, Lat/Lon..."
+                  placeholder="Boxwork, Clays..."
                   value={searchQuery}
                   onFocus={() => {
                     setIsSearchOpen(true);
@@ -4247,9 +4787,9 @@ export default function MarsGlobeViewer() {
                       setSearchResults([]);
                       setIsSearchOpen(false);
                     }}
-                    className="text-slate-500 hover:text-slate-300 text-xs ml-1"
+                    className="text-slate-500 hover:text-slate-300 ml-1 cursor-pointer"
                   >
-                    ✕
+                    <X className="w-3 h-3" />
                   </button>
                 )}
               </div>
@@ -4288,163 +4828,262 @@ export default function MarsGlobeViewer() {
             </div>
           </div>
 
-          {/* Center: Mode Switcher + FR-07 SPE Haven + FR-09 RF Comms + Layer Buttons */}
-          <div className="flex items-center gap-1.5">
-            {/* NASA Space Apps Challenge 2026 Directive Trigger */}
-            <button
-              onClick={() => setShowChallengeModal(true)}
-              className="px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border cursor-pointer bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 hover:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)] flex items-center gap-1.5"
-              title="Official NASA Space Apps Challenge Statement & Multi-Mission Science Directives"
-            >
-              <span>🛰️</span>
-              <span className="hidden sm:inline">NASA DIRECTIVE</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setRoutingEnabled(true);
-                setTraverseMode('ROVER_AUTOPILOT');
-                setIsGlobalCommandView(false);
-              }}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border cursor-pointer ${
-                routingEnabled && !isGlobalCommandView && traverseMode === 'ROVER_AUTOPILOT'
-                  ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.35)]'
-                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              [ROVER]
-            </button>
-            <button
-              onClick={() => {
-                setRoutingEnabled(true);
-                setTraverseMode('ASTRONAUT_HIKE');
-                setIsGlobalCommandView(false);
-              }}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold tracking-wider uppercase transition-all border cursor-pointer ${
-                routingEnabled && !isGlobalCommandView && traverseMode === 'ASTRONAUT_HIKE'
-                  ? 'bg-amber-500/25 text-amber-200 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.35)]'
-                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              [ASTRONAUT HIKE]
-            </button>
-
-            {/* FR-07: RAD-HAVEN Solar Particle Event Shelter Router */}
-            <button
-              onClick={handleToggleSpeAlert}
-              className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all border cursor-pointer ${
-                isSpeAlertActive
-                  ? 'bg-rose-500/35 text-rose-200 border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.5)] animate-pulse'
-                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-rose-300'
-              }`}
-              title="FR-07: RAD-HAVEN 3D Topographic Ray-Tracing & SPE Radiation Haven Evacuation Router"
-            >
-              ⚡ SPE HAVEN
-            </button>
-
-            {/* FR-09: Direct-to-Earth & Mars Orbiter RF Comms Blackout Mapper */}
-            <button
-              onClick={handleToggleRfComms}
-              className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all border cursor-pointer ${
-                showRfCommsGrid
-                  ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.4)]'
-                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-cyan-300'
-              }`}
-              title="FR-09: RF Line-of-Sight Mapping & Canyon Comms Blackout Zones"
-            >
-              📡 RF COMMS
-            </button>
-
-            {/* Algorithm 2: Dynamic Walkback Isochrone Toggle */}
-            {traverseMode === 'ASTRONAUT_HIKE' && (
+          {/* Center: Clean Segmented Mode Toggle + Grouped Dropdowns */}
+          <div className="flex items-center gap-2">
+            {/* View Mode: 3D Globe vs 2D Tactical Map vs Visor HUD */}
+            <div className="flex items-center bg-[#060912] border border-cyan-500/50 rounded-lg p-0.5 font-mono text-[10px] shadow-xs">
               <button
-                onClick={() => setShowWalkbackIsochrone(!showWalkbackIsochrone)}
-                className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all border cursor-pointer ${
-                  showWalkbackIsochrone
-                    ? 'bg-sky-500/25 text-sky-200 border-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.3)]'
-                    : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
+                onClick={() => handleViewModeSwitch('3D')}
+                className={`px-2 py-0.5 rounded font-bold uppercase transition-all cursor-pointer flex items-center gap-1 ${
+                  viewMode === '3D' && !isVisorMode
+                    ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/60 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
-                title="Algorithm 2: NASA EVA Rule of Half 3D Walkback Isochrone Polygon"
+                title="Switch to 3D Photorealistic Terrain Globe"
               >
-                ISOCHRONE
+                <Globe className="w-3 h-3 text-cyan-400" />
+                <span>3D GLOBE</span>
               </button>
-            )}
+              <button
+                onClick={() => handleViewModeSwitch('2D')}
+                className={`px-2 py-0.5 rounded font-bold uppercase transition-all cursor-pointer flex items-center gap-1 ${
+                  viewMode === '2D'
+                    ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/60 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Switch to 2D Planimetric Tactical GIS Map with Mars Trek Layers"
+              >
+                <LucideMap className="w-3 h-3 text-cyan-400" />
+                <span>2D MAP</span>
+              </button>
+              <button
+                onClick={toggleVisorMode}
+                className={`px-2 py-0.5 rounded font-bold uppercase transition-all cursor-pointer flex items-center gap-1 ${
+                  isVisorMode
+                    ? 'bg-amber-500/35 text-amber-200 border border-amber-400/70 shadow-[0_0_10px_rgba(245,158,11,0.4)]'
+                    : 'text-slate-400 hover:text-amber-300'
+                }`}
+                title="First-Person Astronaut Helmet Visor / Cockpit HUD View"
+              >
+                <Eye className="w-3 h-3 text-amber-400" />
+                <span>VISOR HUD</span>
+              </button>
+            </div>
 
-            {routingEnabled && (
+            {/* Segmented Mode Switcher */}
+            <div className="flex items-center bg-[#060912] border border-slate-700/80 rounded-lg p-0.5 font-mono text-[10px]">
               <button
                 onClick={() => {
-                  setRoutingEnabled(false);
-                  setPickingMode('NONE');
+                  setRoutingEnabled(true);
+                  setTraverseMode('ASTRONAUT_HIKE');
+                  setIsGlobalCommandView(false);
                 }}
-                className="px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/60 transition-all cursor-pointer"
-                title="Exit Routing Mode and hide all routes"
+                className={`px-2.5 py-1 rounded font-bold uppercase transition-all cursor-pointer ${
+                  traverseMode === 'ASTRONAUT_HIKE'
+                    ? 'bg-amber-500/30 text-amber-200 border border-amber-400/60 shadow-[0_0_8px_rgba(245,158,11,0.3)]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
               >
-                ✕ EXIT
+                MARSWALK EVA
               </button>
-            )}
+              <button
+                onClick={() => {
+                  setRoutingEnabled(true);
+                  setTraverseMode('ROVER_AUTOPILOT');
+                  setIsGlobalCommandView(false);
+                }}
+                className={`px-2.5 py-1 rounded font-bold uppercase transition-all cursor-pointer ${
+                  traverseMode === 'ROVER_AUTOPILOT'
+                    ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/60 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                ROVER
+              </button>
+            </div>
 
-            <div className="h-4 w-[1px] bg-slate-700 mx-1 hidden lg:block" />
+            {/* Grouped Layers Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setLayerDropdownOpen(!layerDropdownOpen);
+                  setSafetyDropdownOpen(false);
+                  setSiteDropdownOpen(false);
+                }}
+                className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border flex items-center gap-1.5 cursor-pointer ${
+                  layerMode !== 'realistic' || wireframe
+                    ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400'
+                    : 'bg-slate-900/80 text-slate-300 border-slate-700 hover:text-slate-100'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                <span>LAYERS</span>
+                <span className="text-[8px] text-slate-400">▾</span>
+              </button>
+              {layerDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 w-48 bg-[#08101d]/98 border border-cyan-500/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-1">
+                  <button
+                    onClick={() => {
+                      setWireframe(false);
+                      handleLayerModeChange('realistic');
+                      setLayerDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono rounded flex items-center justify-between hover:bg-cyan-500/20 cursor-pointer ${
+                      layerMode === 'realistic' && !wireframe ? 'text-cyan-300 font-bold bg-cyan-950/40' : 'text-slate-300'
+                    }`}
+                  >
+                    <span>Realistic Surface</span>
+                    {layerMode === 'realistic' && !wireframe && <Check className="w-3.5 h-3.5 text-cyan-400" />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setWireframe(false);
+                      handleLayerModeChange('slope_radar');
+                      setLayerDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono rounded flex items-center justify-between hover:bg-cyan-500/20 cursor-pointer ${
+                      layerMode === 'slope_radar' ? 'text-emerald-300 font-bold bg-emerald-950/40' : 'text-slate-300'
+                    }`}
+                  >
+                    <span>Dynamic Slope Radar</span>
+                    {layerMode === 'slope_radar' && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setWireframe(false);
+                      handleLayerModeChange('tactical_contour');
+                      setLayerDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono rounded flex items-center justify-between hover:bg-cyan-500/20 cursor-pointer ${
+                      layerMode === 'tactical_contour' ? 'text-cyan-300 font-bold bg-cyan-950/40' : 'text-slate-300'
+                    }`}
+                  >
+                    <span>50m Topo Contours</span>
+                    {layerMode === 'tactical_contour' && <Check className="w-3.5 h-3.5 text-cyan-400" />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setWireframe(!wireframe);
+                      setLayerDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono rounded flex items-center justify-between hover:bg-cyan-500/20 cursor-pointer ${
+                      wireframe ? 'text-amber-300 font-bold bg-amber-950/40' : 'text-slate-300'
+                    }`}
+                  >
+                    <span>Wireframe DEM</span>
+                    {wireframe && <Check className="w-3.5 h-3.5 text-amber-400" />}
+                  </button>
+                </div>
+              )}
+            </div>
 
+            {/* Grouped Safety & Comms Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setSafetyDropdownOpen(!safetyDropdownOpen);
+                  setLayerDropdownOpen(false);
+                  setSiteDropdownOpen(false);
+                }}
+                className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border flex items-center gap-1.5 cursor-pointer ${
+                  isSpeAlertActive || showRfCommsGrid || showWalkbackIsochrone
+                    ? 'bg-rose-500/25 text-rose-200 border-rose-400'
+                    : 'bg-slate-900/80 text-slate-300 border-slate-700 hover:text-slate-100'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5 text-rose-400" />
+                <span>SAFETY & COMMS</span>
+                {(isSpeAlertActive || showRfCommsGrid || showWalkbackIsochrone) && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping" />
+                )}
+                <span className="text-[8px] text-slate-400">▾</span>
+              </button>
+              {safetyDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 w-56 bg-[#08101d]/98 border border-rose-500/60 rounded-xl shadow-2xl p-1.5 z-50 space-y-1">
+                  <button
+                    onClick={() => {
+                      handleToggleSpeAlert();
+                      setSafetyDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono rounded flex items-center justify-between hover:bg-rose-500/20 cursor-pointer ${
+                      isSpeAlertActive ? 'text-rose-300 font-bold bg-rose-950/40' : 'text-slate-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      <span>SPE Storm Haven</span>
+                    </span>
+                    <span className="font-bold">{isSpeAlertActive ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleToggleRfComms();
+                      setSafetyDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono rounded flex items-center justify-between hover:bg-cyan-500/20 cursor-pointer ${
+                      showRfCommsGrid ? 'text-cyan-300 font-bold bg-cyan-950/40' : 'text-slate-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Radio className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>RF Comms Blackout</span>
+                    </span>
+                    <span className="font-bold">{showRfCommsGrid ? 'ON' : 'OFF'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowWalkbackIsochrone(!showWalkbackIsochrone);
+                      setSafetyDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono rounded flex items-center justify-between hover:bg-sky-500/20 cursor-pointer ${
+                      showWalkbackIsochrone ? 'text-sky-300 font-bold bg-sky-950/40' : 'text-slate-300'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Walkback Isochrone</span>
+                    </span>
+                    <span className="font-bold">{showWalkbackIsochrone ? 'ON' : 'OFF'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* HD / Fast Upscaling Toggle */}
             <button
-              onClick={() => {
-                setWireframe(false);
-                handleLayerModeChange(layerMode === 'slope_radar' ? 'realistic' : 'slope_radar');
-              }}
-              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border hidden md:inline-block ${
-                layerMode === 'slope_radar'
-                  ? 'bg-emerald-500/25 text-emerald-300 border-emerald-400'
-                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
+              onClick={() => setHighDetailMode(!highDetailMode)}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border flex items-center gap-1.5 cursor-pointer ${
+                highDetailMode
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_8px_rgba(16,185,129,0.25)]'
+                  : 'bg-slate-900/80 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
+              title={highDetailMode ? 'HD Mesh Detail Active' : 'Fast Performance Mode Active'}
             >
-              SLOPE RADAR
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{highDetailMode ? 'HD: ON' : 'FAST'}</span>
             </button>
 
-            <button
-              onClick={() => {
-                setWireframe(false);
-                handleLayerModeChange(
-                  layerMode === 'tactical_contour' ? 'realistic' : 'tactical_contour'
-                );
-              }}
-              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border hidden lg:inline-block ${
-                layerMode === 'tactical_contour'
-                  ? 'bg-cyan-500/25 text-cyan-300 border-cyan-400'
-                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              CONTOURS
-            </button>
-
-            <button
-              onClick={() => setWireframe(!wireframe)}
-              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border hidden lg:inline-block ${
-                wireframe
-                  ? 'bg-amber-500/25 text-amber-300 border-amber-400'
-                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              WIREFRAME
-            </button>
-
+            {/* 360° Optics Toggle */}
             <button
               onClick={() => setShowPanoMarkers((v) => !v)}
-              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border inline-flex items-center gap-1.5 ${
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border inline-flex items-center gap-1.5 cursor-pointer ${
                 showPanoMarkers
                   ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/80 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
                   : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
-              title="Toggle 360° Rover Panorama Optic Markers on the surface"
+              title="Toggle 360° Rover Panorama Optic Markers"
             >
               <TacticalOpticIcon
                 className="w-3.5 h-3.5"
                 accentColor={showPanoMarkers ? '#22d3ee' : '#94a3b8'}
               />
-              <span>360° OPTICS</span>
+              <span className="hidden xl:inline">360° OPTICS</span>
             </button>
 
+            {/* Global Orbit Toggle */}
             <button
               onClick={() => toggleGlobalCommandView(!isGlobalCommandView)}
-              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border ${
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border cursor-pointer ${
                 isGlobalCommandView
                   ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400'
                   : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
@@ -4452,19 +5091,27 @@ export default function MarsGlobeViewer() {
             >
               GLOBAL ORBIT
             </button>
+
+            {/* AI Copilot Toggle */}
+            <button
+              onClick={() => setIsAiCopilotOpen(!isAiCopilotOpen)}
+              className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase transition-all border flex items-center gap-1.5 cursor-pointer ${
+                isAiCopilotOpen
+                  ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.3)]'
+                  : 'bg-slate-900/80 text-cyan-300 border-cyan-500/50 hover:bg-cyan-500/20'
+              }`}
+              title="Open ARES AI Tactical Copilot (Assisting Astronaut Sadia A. Puspo)"
+            >
+              <Bot className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden xl:inline">AI COPILOT</span>
+            </button>
           </div>
 
-          {/* Right: Real-Time Synced Mars Sol & Local Solar Time */}
-          <div className="flex items-center gap-2.5 text-xs font-mono">
-            <div
-              className="hidden 2xl:flex items-center gap-1.5 px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-700/50 text-cyan-300 text-[10px]"
-              title="Real-time Martian Sunset / Freeze Countdown at watched longitude"
-            >
-              <span suppressHydrationWarning>❄ {marsEphemeris.freezeCountdownStr}</span>
-            </div>
+          {/* Right: Mars Clock & Sidebar Drawer Toggles */}
+          <div className="flex items-center gap-2 text-xs font-mono">
             <div
               suppressHydrationWarning
-              className="text-slate-200 tracking-wide bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700/70"
+              className="text-slate-200 tracking-wide bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700/70 hidden sm:flex items-center"
               title={`Mars Sol Date (MSD): ${marsEphemeris.msd.toFixed(2)} | Coordinated Mars Time: ${marsEphemeris.mtcStr}`}
             >
               <span suppressHydrationWarning className="text-amber-300 font-bold">
@@ -4475,6 +5122,30 @@ export default function MarsGlobeViewer() {
                 {marsEphemeris.localSolarTimeStr}
               </span>
             </div>
+
+            {/* Panel Quick Toggle Buttons */}
+            <button
+              onClick={() => setLeftPanelOpen(!leftPanelOpen)}
+              className={`p-1.5 rounded border transition-all cursor-pointer ${
+                leftPanelOpen
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
+              }`}
+              title={leftPanelOpen ? 'Collapse Route Panel' : 'Open Route Panel'}
+            >
+              <Navigation className="w-3.5 h-3.5 text-cyan-400" />
+            </button>
+            <button
+              onClick={() => setRightPanelOpen(!rightPanelOpen)}
+              className={`p-1.5 rounded border transition-all cursor-pointer ${
+                rightPanelOpen
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-700 hover:text-slate-200'
+              }`}
+              title={rightPanelOpen ? 'Collapse Telemetry Panel' : 'Open Telemetry Panel'}
+            >
+              <Activity className="w-3.5 h-3.5 text-cyan-400" />
+            </button>
           </div>
         </header>
 
@@ -4485,32 +5156,23 @@ export default function MarsGlobeViewer() {
           {/* =================================================================
               LEFT TACTICAL SIDEBAR
              ================================================================= */}
-          <aside className="w-70 bg-[#0b101b]/92 border-r border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-1 bg-[#060911] p-1 rounded-lg border border-slate-800">
-                <button
-                  onClick={() => setLeftPanelTab('ROUTE')}
-                  className={`py-1 rounded text-[10px] font-bold tracking-wider uppercase transition-all ${
-                    leftPanelTab === 'ROUTE'
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  ROUTE PLANNING
-                </button>
-                <button
-                  onClick={() => setLeftPanelTab('TELEMETRY')}
-                  className={`py-1 rounded text-[10px] font-bold tracking-wider uppercase transition-all ${
-                    leftPanelTab === 'TELEMETRY'
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  GYRO / TORQUE
-                </button>
-              </div>
+          {leftPanelOpen && (
+            <aside className="w-70 bg-[#0b101b]/95 border-r border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                  <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-[11px] uppercase tracking-wider font-mono">
+                    <Navigation className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>ROUND-TRIP PLANNER</span>
+                  </div>
+                  <button
+                    onClick={() => setLeftPanelOpen(false)}
+                    className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 text-xs font-mono transition-all cursor-pointer"
+                    title="Collapse Panel (Clean Map View)"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                </div>
 
-              {leftPanelTab === 'ROUTE' ? (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
                     <span className="text-[11px] font-bold tracking-wider text-slate-200 uppercase">
@@ -4522,14 +5184,14 @@ export default function MarsGlobeViewer() {
                           setRoutingEnabled(false);
                           setPickingMode('NONE');
                         }}
-                        className="text-[9px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/50 hover:bg-rose-500/30"
+                        className="text-[9px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/50 hover:bg-rose-500/30 cursor-pointer"
                       >
                         EXIT ROUTING
                       </button>
                     ) : (
                       <button
                         onClick={() => setRoutingEnabled(true)}
-                        className="text-[9px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-500/30"
+                        className="text-[9px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-500/30 cursor-pointer"
                       >
                         ENABLE ROUTING
                       </button>
@@ -4546,13 +5208,43 @@ export default function MarsGlobeViewer() {
                       </p>
                       <button
                         onClick={() => setRoutingEnabled(true)}
-                        className="w-full py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400 text-cyan-200 font-mono text-xs font-bold uppercase"
+                        className="w-full py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400 text-cyan-200 font-mono text-xs font-bold uppercase cursor-pointer"
                       >
                         START NEW ROUTE
                       </button>
                     </div>
                   ) : (
                     <>
+                      {/* Verified 1-Click Science Marswalks */}
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between">
+                          <span>1-CLICK SCIENCE MARSWALKS</span>
+                          <span className="text-[9px] font-mono text-slate-400">NASA PRESETS</span>
+                        </div>
+                        <div className="space-y-1">
+                          {PRESET_EVA_ROUTES.filter((r) => r.siteId === selectedSite.id).map((pr) => (
+                            <button
+                              key={pr.id}
+                              onClick={() => applyPresetEvaRoute(pr)}
+                              className="w-full text-left p-1.5 rounded-lg bg-[#0e1626] hover:bg-[#14233c] border border-slate-800 hover:border-cyan-400/60 transition-all flex flex-col gap-0.5 group cursor-pointer"
+                              title={pr.description}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-slate-200 group-hover:text-cyan-300">
+                                  {pr.name}
+                                </span>
+                                <span className="text-[9px] font-mono px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                  {pr.scienceValueScore} SCI
+                                </span>
+                              </div>
+                              <div className="text-[9px] text-slate-400 truncate">
+                                {pr.scienceTarget}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       {/* Outbound + Return Dual Path Legend & Toggle */}
                       <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2 space-y-1.5">
                         <div className="flex items-center justify-between text-[10px]">
@@ -4561,7 +5253,7 @@ export default function MarsGlobeViewer() {
                           </span>
                           <button
                             onClick={() => setShowReturnLeg(!showReturnLeg)}
-                            className={`font-mono text-[9px] px-1.5 py-0.5 rounded border ${
+                            className={`font-mono text-[9px] px-1.5 py-0.5 rounded border cursor-pointer ${
                               showReturnLeg
                                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
                                 : 'bg-slate-800 text-slate-400 border-slate-700'
@@ -4582,16 +5274,30 @@ export default function MarsGlobeViewer() {
                         </div>
                       </div>
 
+                      {/* Export Mission Traverse Action Button */}
+                      <div>
+                        <button
+                          onClick={() => setIsExportModalOpen(true)}
+                          disabled={!activeRouteData}
+                          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-950/80 to-blue-950/80 hover:from-cyan-900/90 hover:to-blue-900/90 border border-cyan-400/60 hover:border-cyan-400 text-cyan-200 font-mono text-[11px] font-bold uppercase transition-all shadow-[0_0_15px_rgba(0,240,255,0.2)] hover:scale-[1.01] cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                          title="Export mission traverse as GeoJSON, GPX 1.1, and NASA PDS4 XML"
+                        >
+                          <Download className="w-4 h-4 text-cyan-400" />
+                          <span>EXPORT TRAVERSE (GPX / PDS4 XML)</span>
+                        </button>
+                      </div>
+
                       {/* ORIGIN: START (A1) */}
                       <div>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">
-                          ORIGIN (A1)
+                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 flex justify-between">
+                          <span>ORIGIN (A1)</span>
+                          <span className="text-[9px] font-mono text-emerald-400">START POINT</span>
                         </div>
                         <button
                           onClick={() =>
                             setPickingMode(pickingMode === 'START' ? 'NONE' : 'START')
                           }
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all ${
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all cursor-pointer ${
                             pickingMode === 'START'
                               ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200 animate-pulse'
                               : 'bg-[#111827]/90 border-slate-700 hover:border-slate-500'
@@ -4599,7 +5305,7 @@ export default function MarsGlobeViewer() {
                         >
                           <div>
                             <div className="text-xs font-bold text-slate-100">
-                              {pickingMode === 'START' ? 'CLICK GLOBE FOR START...' : 'START'}
+                              {pickingMode === 'START' ? 'CLICK GLOBE FOR START...' : 'ORIGIN A1'}
                             </div>
                             <div className="text-[10px] font-mono text-slate-400">
                               {routeEndpoints.startLat.toFixed(3)}°N,{' '}
@@ -4612,14 +5318,34 @@ export default function MarsGlobeViewer() {
                         </button>
                       </div>
 
+                      {/* Swap A ↔ B button */}
+                      <div className="flex justify-center -my-1">
+                        <button
+                          onClick={() => {
+                            setRouteEndpoints((prev) => ({
+                              startLat: prev.endLat,
+                              startLon: prev.endLon,
+                              endLat: prev.startLat,
+                              endLon: prev.startLon,
+                            }));
+                          }}
+                          className="px-3 py-0.5 rounded-full bg-slate-900 hover:bg-cyan-950/80 border border-slate-700 hover:border-cyan-500/60 text-[9px] font-mono text-slate-300 hover:text-cyan-300 transition-all flex items-center gap-1 cursor-pointer"
+                          title="Reverse route direction: swap Start and Destination"
+                        >
+                          <span>⇄</span>
+                          <span>SWAP A ↔ B</span>
+                        </button>
+                      </div>
+
                       {/* DESTINATION (B2) */}
                       <div>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">
-                          DESTINATION (B2)
+                        <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 flex justify-between">
+                          <span>DESTINATION (B2)</span>
+                          <span className="text-[9px] font-mono text-rose-400">TARGET</span>
                         </div>
                         <button
                           onClick={() => setPickingMode(pickingMode === 'END' ? 'NONE' : 'END')}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all ${
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-all cursor-pointer ${
                             pickingMode === 'END'
                               ? 'bg-rose-500/20 border-rose-400 text-rose-200 animate-pulse'
                               : 'bg-[#111827]/90 border-slate-700 hover:border-slate-500'
@@ -4627,7 +5353,7 @@ export default function MarsGlobeViewer() {
                         >
                           <div>
                             <div className="text-xs font-bold text-slate-100">
-                              {pickingMode === 'END' ? 'CLICK GLOBE FOR END...' : 'DESTINATION'}
+                              {pickingMode === 'END' ? 'CLICK GLOBE FOR END...' : 'DESTINATION B2'}
                             </div>
                             <div className="text-[10px] font-mono text-slate-400">
                               {routeEndpoints.endLat.toFixed(3)}°N,{' '}
@@ -4640,11 +5366,19 @@ export default function MarsGlobeViewer() {
                         </button>
                       </div>
 
+                      {/* Seamless Routing Tip */}
+                      <div className="bg-[#08101a] border border-cyan-900/60 rounded-lg p-2 text-[9px] font-mono text-cyan-300/90 leading-tight flex items-start gap-1.5">
+                        <Info className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="text-cyan-200">Tip:</strong> Right-click anywhere on Mars to set Destination (B2), or Shift+Right-Click for Origin (A1).
+                        </div>
+                      </div>
+
                       {/* UNTRAVERSABLE WARNING OR STEP-BY-STEP ROUND-TRIP CARDS */}
                       {activeRouteData && !activeRouteData.isTraversable ? (
                         <div className="bg-rose-950/75 border-2 border-rose-500 rounded-xl p-3 space-y-2">
                           <div className="text-xs font-bold text-rose-300 uppercase flex items-center gap-1.5">
-                            <span>⛔</span>
+                            <AlertTriangle className="w-4 h-4 text-rose-400" />
                             <span>ROUTE UNTRAVERSABLE</span>
                           </div>
                           <p className="text-[11px] text-rose-100/90 leading-relaxed">
@@ -4654,7 +5388,7 @@ export default function MarsGlobeViewer() {
                             onClick={handleScanNearbySafeHaven}
                             className="w-full py-1.5 px-2 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-400 text-emerald-200 font-mono text-[10px] font-bold tracking-wider uppercase transition-all shadow-[0_0_12px_rgba(16,185,129,0.3)] flex items-center justify-center gap-1.5 cursor-pointer"
                           >
-                            <span>🎯</span>
+                            <Target className="w-3.5 h-3.5 text-emerald-400" />
                             <span>AUTO-SCAN ACCESSIBLE HAVEN</span>
                           </button>
                           <div className="text-[9px] font-mono text-rose-300 pt-0.5">
@@ -4669,7 +5403,7 @@ export default function MarsGlobeViewer() {
                           {activeRouteData?.segments.map((seg) => {
                             const isReturn = seg.leg === 'RETURN';
                             const borderCol = isReturn
-                              ? 'border-l-4 border-l-amber-400 border-slate-700/80'
+                                ? 'border-l-4 border-l-amber-400 border-slate-700/80'
                               : 'border-l-4 border-l-cyan-400 border-slate-700/80';
                             const titleCol = isReturn ? 'text-amber-300' : 'text-cyan-300';
 
@@ -4693,143 +5427,7 @@ export default function MarsGlobeViewer() {
                     </>
                   )}
                 </div>
-              ) : (
-                /* GYRO-INCLINOMETER & ROVER TELEMETRY */
-                <div className="space-y-3">
-                  <div className="text-[11px] font-bold tracking-wider text-slate-200 uppercase border-b border-slate-800 pb-1">
-                    GYRO-INCLINOMETER
-                  </div>
-
-                  <div className="relative flex items-center justify-between px-2 py-1 bg-[#0c1322] rounded-xl border border-slate-800">
-                    <div className="text-center">
-                      <div className="text-[9px] text-slate-400 uppercase">ROLL:</div>
-                      <div className="text-xs font-mono font-bold text-cyan-300 mt-1">
-                        {liveTelemetry.rollDeg >= 0
-                          ? `+${liveTelemetry.rollDeg}°`
-                          : `${liveTelemetry.rollDeg}°`}
-                      </div>
-                    </div>
-
-                    <div className="relative h-24 w-24 rounded-full border-2 border-slate-500 overflow-hidden shadow-inner bg-[#09121e]">
-                      <div
-                        className="w-full h-full transition-transform duration-150"
-                        style={{
-                          transform: `rotate(${-liveTelemetry.rollDeg * 2.5}deg) translateY(${
-                            liveTelemetry.pitchDeg * 1.6
-                          }px)`,
-                        }}
-                      >
-                        <div className="w-full h-1/2 bg-gradient-to-b from-sky-500/80 to-sky-400/50 border-b-2 border-amber-300" />
-                        <div className="w-full h-1/2 bg-gradient-to-b from-amber-700/80 to-amber-950/90" />
-                      </div>
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className="w-14 h-[1.5px] bg-white/80" />
-                      </div>
-                    </div>
-
-                    <div className="text-center">
-                      <div className="text-[9px] text-slate-400 uppercase">PITCH:</div>
-                      <div
-                        className={`text-xs font-mono font-bold mt-1 ${
-                          Math.abs(liveTelemetry.pitchDeg) > 15
-                            ? 'text-rose-400'
-                            : 'text-amber-300'
-                        }`}
-                      >
-                        {liveTelemetry.pitchDeg >= 0
-                          ? `+${liveTelemetry.pitchDeg}°`
-                          : `${liveTelemetry.pitchDeg}°`}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="relative flex items-center justify-center py-1">
-                    <div className="relative h-24 w-24 rounded-full border border-slate-600 bg-[#080d18] flex flex-col items-center justify-center shadow-inner">
-                      <span className="text-[9px] text-amber-400 font-bold absolute top-1">N</span>
-                      <span className="text-[9px] text-slate-500 font-bold absolute bottom-1">
-                        S
-                      </span>
-                      <span className="text-[9px] text-slate-500 font-bold absolute left-1.5">
-                        W
-                      </span>
-                      <span className="text-[9px] text-slate-500 font-bold absolute right-1.5">
-                        E
-                      </span>
-                      <div className="text-base font-mono font-bold text-slate-100">
-                        {String(liveTelemetry.headingDeg).padStart(3, '0')}°
-                      </div>
-                      <div className="text-[10px] font-mono text-cyan-400">
-                        {liveTelemetry.compassDir}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-[#0c1322] rounded-xl border border-slate-800 p-2.5 text-center">
-                    <div className="text-xl font-mono font-bold text-amber-300">
-                      {liveTelemetry.speedKmh}
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-mono">km/h</div>
-                  </div>
-
-                  {traverseMode === 'ROVER_AUTOPILOT' ? (
-                    <div className="space-y-1 pt-1">
-                      <div className="text-[10px] font-bold tracking-wider text-slate-300 uppercase">
-                        WHEEL TORQUE
-                      </div>
-                      {liveTelemetry.wheelTorques.map((t, idx) => (
-                        <div key={idx} className="flex items-center gap-2 text-[10px] font-mono">
-                          <span className="text-slate-400 w-6">W {idx + 1}</span>
-                          <div className="flex-1 h-2 bg-slate-800 rounded overflow-hidden">
-                            <div
-                              className={`h-full rounded ${
-                                t > 80 ? 'bg-amber-400' : 'bg-amber-500/80'
-                              }`}
-                              style={{ width: `${t}%` }}
-                            />
-                          </div>
-                          <span className="text-slate-300 w-7 text-right">{t}%</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="space-y-2 pt-1 border-t border-slate-800 text-[10px] font-mono">
-                      <div className="text-[10px] font-bold tracking-wider text-amber-400 uppercase">
-                        BIO-TERRAMECHANICS (0.38g)
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">METABOLIC POWER:</span>
-                          <span className="text-amber-300 font-bold">{liveTelemetry.metabolicWatts} W</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
-                          <div
-                            className={`h-full rounded ${
-                              liveTelemetry.metabolicWatts > 420
-                                ? 'bg-rose-500'
-                                : liveTelemetry.metabolicWatts > 280
-                                ? 'bg-amber-400'
-                                : 'bg-emerald-400'
-                            }`}
-                            style={{ width: `${Math.min(100, (liveTelemetry.metabolicWatts / 550) * 100)}%` }}
-                          />
-                        </div>
-                        <div className="text-[8px] text-slate-500">Santee-Pandolf (W=80kg, L=55kg, C_suit=+45W)</div>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">SUBLIMATOR COOLING:</span>
-                        <span className="text-cyan-300 font-bold">{liveTelemetry.waterBurnGph} g/h</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">THEMIS SOIL:</span>
-                        <span className="text-emerald-300 font-bold">
-                          {liveTelemetry.frictionMu >= 0.74 ? 'CLASS_A ROCK (η=1.0)' : 'CLASS_B SAND (η=1.2)'}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+              </div>
 
             {/* Bottom of Left Sidebar: 360° Rover Panoramas & Expedition Hubs */}
             <div className="pt-3 border-t border-slate-800 space-y-2">
@@ -4899,130 +5497,156 @@ export default function MarsGlobeViewer() {
               </div>
             </div>
           </aside>
+          )}
 
           {/* =================================================================
-              CENTER 3D VIEWPORT + AUTO-HIDING HUD OVERLAYS
+              CENTER VIEWPORT (3D GLOBE OR 2D TACTICAL MAP)
              ================================================================= */}
           <main className="relative flex-1 h-full overflow-hidden">
+            {/* 2D Planimetric Tactical GIS Map (Real NASA Mars Trek API Tiles) */}
+            <div className={`w-full h-full ${viewMode === '2D' ? 'block' : 'hidden'}`}>
+              <MarsTactical2DMap
+                site={selectedSite}
+                terrainField={terrainFieldRef.current}
+                routeData={activeRouteData}
+                routeEndpoints={routeEndpoints}
+                routingEnabled={routingEnabled}
+                showReturnLeg={showReturnLeg}
+                traverseMode={traverseMode}
+                pickingMode={pickingMode}
+                onPickPoint={(lat, lon, isOrigin) => {
+                  if (isOrigin !== undefined) {
+                    if (isOrigin) {
+                      setRouteEndpoints((prev) => ({ ...prev, startLat: lat, startLon: lon }));
+                    } else {
+                      setRouteEndpoints((prev) => ({ ...prev, endLat: lat, endLon: lon }));
+                    }
+                    setRoutingEnabled(true);
+                  } else if (pickingMode === 'START') {
+                    setRouteEndpoints((prev) => ({ ...prev, startLat: lat, startLon: lon }));
+                    setPickingMode('NONE');
+                  } else if (pickingMode === 'END') {
+                    setRouteEndpoints((prev) => ({ ...prev, endLat: lat, endLon: lon }));
+                    setPickingMode('NONE');
+                  } else {
+                    setRouteEndpoints((prev) => ({ ...prev, endLat: lat, endLon: lon }));
+                  }
+                }}
+                walkbackIsochrone={walkbackIsochrone}
+                showWalkbackIsochrone={showWalkbackIsochrone}
+                speReport={speReport}
+                isSpeAlertActive={isSpeAlertActive}
+                rfCommsReport={rfCommsReport}
+                showRfCommsGrid={showRfCommsGrid}
+                showPanoMarkers={showPanoMarkers}
+                panoStations={ROVER_PANORAMA_STATIONS}
+                onSelectPanoStation={openRoverStreetView}
+              />
+            </div>
+
+            {/* 3D Photorealistic Terrain Globe */}
             <div
               ref={containerRef}
-              className={`w-full h-full ${
+              className={`w-full h-full ${viewMode === '3D' ? 'block' : 'hidden'} ${
                 pickingMode !== 'NONE'
                   ? 'cursor-crosshair'
                   : 'cursor-grab active:cursor-grabbing'
               }`}
             />
 
-            {/* Top Center Viewport Sub-Header (Fades out if cursor hovers near it while viewing route!) */}
-            <div className="absolute top-3 left-4 right-4 flex flex-wrap items-start justify-between gap-4 pointer-events-none z-10">
+            {/* Edge Tab Handle to Restore Left Panel when Collapsed */}
+            {!leftPanelOpen && (
+              <button
+                onClick={() => setLeftPanelOpen(true)}
+                className="absolute top-3 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#08101d]/90 backdrop-blur-md border border-cyan-500/50 hover:border-cyan-400 text-cyan-300 font-mono text-xs font-bold shadow-xl transition-all cursor-pointer hover:scale-105"
+                title="Open Route & Science Drawer"
+              >
+                <Navigation className="w-3.5 h-3.5 text-cyan-400" />
+                <span>ROUTE PLANNER</span>
+                <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+            )}
+
+            {/* Edge Tab Handle to Restore Right Panel when Collapsed */}
+            {!rightPanelOpen && (
+              <button
+                onClick={() => setRightPanelOpen(true)}
+                className="absolute top-3 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#08101d]/90 backdrop-blur-md border border-cyan-500/50 hover:border-cyan-400 text-cyan-300 font-mono text-xs font-bold shadow-xl transition-all cursor-pointer hover:scale-105"
+                title="Open Astronaut EVA Telemetry Drawer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5 text-slate-400" />
+                <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                <span>EVA TELEMETRY</span>
+              </button>
+            )}
+
+            {/* Interactive Picking Mode Floating Banner */}
+            {pickingMode !== 'NONE' && (
+              <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 pointer-events-auto bg-[#0a1424]/95 border-2 border-cyan-400 px-4 py-2 rounded-full shadow-[0_0_25px_rgba(0,240,255,0.4)] flex items-center gap-3 backdrop-blur-md animate-pulse">
+                <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                <span className="text-xs font-mono font-bold text-cyan-200 uppercase tracking-wide">
+                  CLICK ON MARS TERRAIN TO SET {pickingMode === 'START' ? 'ORIGIN (A1)' : 'DESTINATION (B2)'}
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
+                  (Or right-click anywhere anytime)
+                </span>
+                <button
+                  onClick={() => setPickingMode('NONE')}
+                  className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/50 hover:bg-rose-500/30 text-[10px] font-mono font-bold cursor-pointer"
+                >
+                  CANCEL
+                </button>
+              </div>
+            )}
+
+            {/* Minimalist Floating Route HUD Pill (Only when route is active - anchored at bottom to never collide with top menus!) */}
+            {routingEnabled && activeRouteData && !isGlobalCommandView && (
               <div
-                className={`bg-[#090e18]/80 backdrop-blur-md border border-slate-700/70 px-3.5 py-2 rounded-lg transition-opacity duration-200 ${
-                  isCursorNear(150, 40, 130) ? 'opacity-10' : 'opacity-100'
+                className={`absolute bottom-12 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 rounded-full bg-[#08101e]/90 backdrop-blur-md border border-cyan-500/40 shadow-[0_4px_25px_rgba(0,0,0,0.8),0_0_15px_rgba(0,240,255,0.15)] text-[11px] sm:text-xs font-mono max-w-[95%] transition-opacity duration-200 ${
+                  siteDropdownOpen || layerDropdownOpen || safetyDropdownOpen
+                    ? 'opacity-20 pointer-events-none'
+                    : 'opacity-100'
                 }`}
               >
-                <div className="text-sm md:text-base font-bold tracking-wide text-slate-100 uppercase">
-                  {selectedSite.shortLabel}
-                  <span className="mx-2 text-slate-600">|</span>
-                  <span className="font-mono text-cyan-300 text-xs md:text-sm">
-                    {liveTelemetry.lat >= 0
-                      ? `${liveTelemetry.lat.toFixed(2)}°N`
-                      : `${Math.abs(liveTelemetry.lat).toFixed(2)}°S`}{' '}
-                    {liveTelemetry.lon.toFixed(2)}°E
-                  </span>
-                </div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                  SEAMLESS BICUBIC DEM • MAX ZOOM LEVEL {maxRenderedZoom} ({visibleTileCount} MESHES)
-                </div>
-              </div>
-
-              {/* Round-Trip Progress Bar (A1 -> A2 -> B2 -> R1 -> A1) */}
-              {routingEnabled && activeRouteData && !isGlobalCommandView && (
-                <div
-                  className={`bg-[#090e18]/85 backdrop-blur-md border px-4 py-2 rounded-lg min-w-72 transition-opacity duration-200 ${
-                    activeRouteData.isTraversable
-                      ? 'border-slate-700/70'
-                      : 'border-rose-500/90 bg-rose-950/85'
-                  } ${isCursorNear(480, 40, 130) ? 'opacity-10' : 'opacity-100'}`}
-                >
-                  {activeRouteData.isTraversable ? (
-                    <>
-                      <div className="flex items-center justify-between text-xs font-mono mb-1.5">
-                        <span className="text-cyan-300 font-bold">
-                          A→B: {activeRouteData.outboundDistKm} km | B→A:{' '}
-                          {activeRouteData.returnDistKm} km
-                        </span>
-                        <span className="text-slate-300 ml-3">
-                          ELEV:{' '}
-                          <strong className="text-emerald-300">
-                            {Math.round(liveTelemetry.elevM)} m
-                          </strong>
-                        </span>
-                      </div>
-                      <div className="relative flex items-center justify-between">
-                        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-amber-400/70 rounded" />
-                        <div className="absolute left-0 w-1/2 top-1/2 -translate-y-1/2 h-1 bg-cyan-400 rounded shadow-[0_0_8px_#00f0ff]" />
-                        {['A1', 'A2', 'B2', 'R1', 'A1'].map((lbl, idx) => (
-                          <div key={idx} className="relative z-10 flex flex-col items-center">
-                            <div
-                              className={`w-2.5 h-2.5 rounded-full border ${
-                                idx <= 2
-                                  ? 'bg-cyan-400 border-white'
-                                  : 'bg-amber-400 border-slate-900'
-                              }`}
-                            />
-                            <span className="text-[9px] font-mono text-slate-300 mt-1">{lbl}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-xs font-mono text-rose-200 font-bold flex items-center gap-2">
-                      <span>⛔</span>
-                      <span>
-                        MISSION ABORT: {activeRouteData.failureReason}
-                      </span>
+                {activeRouteData.isTraversable ? (
+                  <>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="text-slate-300 hidden sm:inline">ROUND-TRIP:</span>
+                      <span className="text-cyan-300 font-bold">{activeRouteData.totalRoundTripKm} km</span>
                     </div>
-                  )}
-                </div>
-              )}
-
-              {/* Top-Right Viewport Summary Box */}
-              {routingEnabled &&
-                activeRouteData &&
-                activeRouteData.isTraversable &&
-                !isGlobalCommandView && (
-                  <div
-                    className={`bg-[#090e18]/90 backdrop-blur-md border border-slate-700/80 px-3.5 py-2 rounded-lg text-xs font-mono space-y-1 min-w-52 transition-opacity duration-200 ${
-                      isCursorNear(820, 50, 140) ? 'opacity-10' : 'opacity-100'
-                    }`}
-                  >
-                    <div className="flex justify-between gap-4">
-                      <span className="text-slate-400">ROUND-TRIP TIME:</span>
-                      <span className="text-slate-100 font-bold">
-                        {activeRouteData.estRoundTripTimeMin}m
-                      </span>
+                    <span className="text-slate-600">|</span>
+                    <div className="text-slate-300 shrink-0">
+                      TIME: <span className="text-slate-100 font-bold">{activeRouteData.estRoundTripTimeMin}m</span>
                     </div>
-                    <div className="flex justify-between gap-4">
-                      <span className="text-slate-400">ROUND-TRIP DIST:</span>
-                      <span className="text-cyan-300 font-bold">
-                        {activeRouteData.totalRoundTripKm} km
-                      </span>
+                    <span className="text-slate-600 hidden md:inline">|</span>
+                    <div className="text-slate-300 hidden md:inline shrink-0">
+                      SLOPE: <span className="text-emerald-300 font-bold">{activeRouteData.maxSlopeDeg}°</span>
                     </div>
-                    <div className="flex justify-between gap-4">
-                      <span className="text-slate-400">MAX SAFE SLOPE:</span>
-                      <span className="font-bold text-emerald-300">
-                        {activeRouteData.maxSlopeDeg}°
-                      </span>
+                    <span className="text-slate-600 hidden lg:inline">|</span>
+                    <div className="text-slate-300 hidden lg:inline shrink-0">
+                      ENERGY: <span className="text-amber-300 font-bold">{activeRouteData.estEnergyWh} Wh</span>
                     </div>
-                    <div className="flex justify-between gap-4">
-                      <span className="text-slate-400">ROUND-TRIP ENERGY:</span>
-                      <span className="text-amber-300 font-bold">
-                        {activeRouteData.estEnergyWh} Wh
-                      </span>
-                    </div>
+                    <button
+                      onClick={() => {
+                        setRoutingEnabled(false);
+                        setPickingMode('NONE');
+                      }}
+                      className="ml-1 px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[10px] font-bold cursor-pointer transition-all shrink-0 flex items-center gap-1"
+                      title="Hide route lines"
+                    >
+                      <X className="w-3 h-3" />
+                      <span>HIDE</span>
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 text-rose-300 font-bold text-xs truncate">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    <span className="truncate">ROUTE UNTRAVERSABLE: {activeRouteData.failureReason}</span>
                   </div>
                 )}
-            </div>
+              </div>
+            )}
 
             {/* 3D-Projected Expedition Hub Markers (Auto-hide when cursor is near them while viewing routes!) */}
             <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
@@ -5128,7 +5752,7 @@ export default function MarsGlobeViewer() {
                         }`}
                       >
                         <div className="bg-[#18120b]/90 border border-amber-500/80 px-2 py-0.5 rounded text-[10px] font-mono text-amber-300 shadow-lg flex items-center gap-1.5 whitespace-nowrap">
-                          <span className="text-amber-400 font-bold">⚠</span>
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                           <span>{tag.text}</span>
                         </div>
                       </div>
@@ -5151,19 +5775,126 @@ export default function MarsGlobeViewer() {
                       >
                         {tag.text}
                       </div>
-                      {tag.subtext && !nearMouse && (
-                        <div className="bg-[#091322]/90 border border-cyan-500/60 px-2.5 py-1 rounded text-[10px] font-mono text-cyan-200 whitespace-nowrap shadow-lg hidden sm:block">
-                          <div className="font-bold text-cyan-300">
-                            {traverseMode === 'ROVER_AUTOPILOT'
-                              ? 'ROVER ROUND-TRIP (A→B & B→A)'
-                              : 'ASTRONAUT EVA WALKBACK (A→B & B→A)'}
-                          </div>
-                          <div className="text-[9px] text-slate-300">{tag.subtext}</div>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* 3D-Projected Interactive Science Targets */}
+            {!isGlobalCommandView && !activeStreetViewStation && (
+              <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+                {projectedScienceTargets.map(({ target, x, y, visible }) => {
+                  if (!visible) return null;
+                  const nearMouseWhenRouting = routingEnabled && isCursorNear(x, y, 65);
+                  const isSelected = selectedScienceTarget?.id === target.id;
+                  return (
+                    <div
+                      key={target.id}
+                      style={{
+                        transform: `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`,
+                      }}
+                      className={`absolute top-0 left-0 -translate-x-1/2 -translate-y-full pb-1 transition-opacity duration-150 ${
+                        nearMouseWhenRouting
+                          ? 'opacity-20 pointer-events-none'
+                          : 'opacity-95 pointer-events-auto'
+                      }`}
+                    >
+                      <button
+                        onClick={() => setSelectedScienceTarget(target)}
+                        title={`Inspect Science Target: ${target.name} (${target.crismMineralogy})`}
+                        className={`group flex items-center gap-1.5 px-2 py-1 rounded-md backdrop-blur-md border text-slate-200 shadow-md transition-all hover:scale-105 cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-900/90 border-purple-400 text-purple-200 shadow-[0_0_14px_rgba(168,85,247,0.45)]'
+                            : 'bg-[#0b0f1c]/90 hover:bg-[#141b33]/95 border-purple-500/50 hover:border-purple-400'
+                        }`}
+                      >
+                        <Target className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                        <span className="text-[10px] font-mono font-bold tracking-wider text-purple-300">
+                          {target.name}
+                        </span>
+                        <span className="text-[9px] font-mono text-emerald-400 border-l border-slate-700 pl-1">
+                          {target.scienceValueScore} SCI
+                        </span>
+                      </button>
+                      <div className="mx-auto w-[1px] h-2 bg-purple-400/60" />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Interactive Science Target HUD Card (3D Globe Mode) */}
+            {selectedScienceTarget && viewMode === '3D' && (
+              <div className="absolute top-16 left-6 z-30 w-84 bg-[#0a101d]/95 backdrop-blur-md border border-purple-500/60 rounded-xl p-3 shadow-2xl space-y-2 animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="flex items-center justify-between border-b border-purple-500/30 pb-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-purple-300 font-mono">
+                    <Target className="w-4 h-4 text-purple-400" />
+                    <span className="truncate max-w-[200px]">{selectedScienceTarget.name}</span>
+                  </div>
+                  <button
+                    onClick={() => setSelectedScienceTarget(null)}
+                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 text-xs transition-all cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="text-[10px] text-slate-300 leading-snug">
+                  {selectedScienceTarget.recommendedMission}
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5 text-[9px] font-mono bg-[#060a14] p-2 rounded-lg border border-purple-500/20">
+                  <div className="col-span-2">
+                    <span className="text-slate-400">CRISM MINERAL:</span>
+                    <div className="text-purple-300 font-bold truncate">{selectedScienceTarget.crismMineralogy}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-400">PIXL XRF:</span>
+                    <div className="text-amber-300 truncate">{selectedScienceTarget.pixlChemistry}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-400">SHERLOC RAMAN:</span>
+                    <div className="text-cyan-300 truncate">{selectedScienceTarget.sherlocRaman}</div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setRoutingEnabled(true);
+                    setRouteEndpoints((prev) => ({
+                      ...prev,
+                      endLat: selectedScienceTarget.lat,
+                      endLon: selectedScienceTarget.lon,
+                    }));
+                    setPickingMode('NONE');
+                    setSelectedScienceTarget(null);
+                  }}
+                  className="w-full py-1.5 px-3 rounded-lg bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white font-mono text-[10px] font-bold tracking-wider uppercase shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Navigation className="w-3.5 h-3.5" />
+                  <span>PLAN MARSWALK HERE →</span>
+                </button>
+              </div>
+            )}
+
+            {/* Aerospace HUD Loading Overlay */}
+            {isSceneLoading && (
+              <div className="absolute inset-0 z-50 bg-[#060a12]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 animate-in fade-in duration-200 pointer-events-auto">
+                <div className="relative">
+                  <Loader2 className="w-10 h-10 text-cyan-400 animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Globe className="w-4 h-4 text-cyan-200" />
+                  </div>
+                </div>
+                <div className="text-center space-y-1">
+                  <div className="text-xs font-mono font-bold tracking-widest text-cyan-300 uppercase">
+                    STREAMING NASA MARS DATA
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400">
+                    16-Bit MOLA DTM • MRO CTX • CRISM SPECTRAL • SAFETY ENGINES
+                  </div>
+                </div>
               </div>
             )}
 
@@ -5175,205 +5906,46 @@ export default function MarsGlobeViewer() {
                   (st) => st.siteId === activeStreetViewStation.siteId
                 )}
                 onSelectStation={(st) => openRoverStreetView(st)}
-                onClose={() => setActiveStreetViewStation(null)}
+                onClose={() => closeRoverStreetView()}
               />
-            )}
-
-            {/* NASA Space Apps Challenge 2026 Directive & Mission Brief Modal */}
-            {showChallengeModal && (
-              <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
-                <div className="bg-[#0b101b] border border-cyan-500/40 rounded-2xl max-w-3xl w-full p-6 text-slate-200 shadow-[0_0_50px_rgba(0,240,255,0.2)] max-h-[90vh] overflow-y-auto space-y-5">
-                  {/* Header */}
-                  <div className="flex items-start justify-between border-b border-slate-800 pb-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                          NASA SPACE APPS 2026
-                        </span>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                          OFFICIAL DIRECTIVE
-                        </span>
-                      </div>
-                      <h2 className="text-xl font-bold text-white tracking-wide">
-                        ARES-NAVIGATOR: MARSWALK MISSION PLANNING
-                      </h2>
-                      <p className="text-xs text-slate-400">
-                        Layered Multi-Mission Surface Exploration, Bio-Terramechanics &amp; Radiation Evacuation
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setShowChallengeModal(false)}
-                      className="text-slate-400 hover:text-white px-2.5 py-1 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-sm font-mono transition-all cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  {/* Challenge Statement Box */}
-                  <div className="bg-[#0e1626] border border-slate-800 rounded-xl p-3.5 space-y-2">
-                    <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5 font-mono">
-                      <span>🎯</span>
-                      <span>CHALLENGE OBJECTIVE</span>
-                    </div>
-                    <p className="text-xs text-slate-300 leading-relaxed italic">
-                      &quot;Create a layered, integrated view of a location or route on the Martian surface that pulls together data from multiple NASA science missions and could help a human explorer plan and carry out a successful Marswalk while conducting new and exciting science along the way.&quot;
-                    </p>
-                  </div>
-
-                  {/* Featured 2025 Science Goal: Mount Sharp Boxwork Formations */}
-                  <div className="bg-gradient-to-r from-emerald-950/40 to-cyan-950/30 border border-emerald-500/40 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-2 font-mono">
-                        <span>🔬</span>
-                        <span>FEATURED SCIENCE GOAL: CURIOSITY 2025 BOXWORK FORMATIONS</span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                        100/100 SCIENCE VALUE
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      Studied extensively by NASA’s Curiosity rover in 2025, the Mount Sharp boxwork formations represent mineral-cemented polygonal fracture networks formed by ancient deep groundwater circulation. As the surrounding bedrock eroded over billions of years, durable sulfate-rich ridges were left standing. Astronauts will execute a Marswalk to sample these ridges and map ancient habitability.
-                    </p>
-                    <div className="flex items-center justify-between pt-1">
-                      <span className="text-[11px] font-mono text-slate-400">
-                        Coordinates: <strong className="text-slate-200">4.732°S, 137.395°E</strong> • Relief: <strong className="text-slate-200">-4,010 m</strong>
-                      </span>
-                      <button
-                        onClick={flyToBoxworkObjective}
-                        className="px-3 py-1.5 rounded-lg text-xs font-mono font-bold uppercase bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 hover:brightness-110 transition-all shadow-[0_0_15px_rgba(16,185,129,0.35)] cursor-pointer flex items-center gap-1.5"
-                      >
-                        <span>🚀</span>
-                        <span>FLY TO 2025 BOXWORK FORMATIONS</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 6 Integrated Multi-Mission NASA Datasets */}
-                  <div className="space-y-2">
-                    <div className="text-[11px] font-bold text-cyan-300 uppercase tracking-wider font-mono">
-                      FUSED NASA SCIENCE MISSIONS &amp; DATA LAYERS (6 STREAMS)
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
-                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                          <span className="text-cyan-400">1. TOPOGRAPHIC:</span>
-                          <span>MOLA + HRSC / HiRISE DEM</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Continuous 16-bit elevation with sub-10m resolution, multi-tier bicubic interpolation, and real-time slope calculations.
-                        </p>
-                      </div>
-
-                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
-                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                          <span className="text-cyan-400">2. OPTICAL &amp; POV:</span>
-                          <span>Viking + CTX + Mastcam-Z 360°</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Viking MDIM 2.1 global color, 6m MRO CTX orthomosaics, and clickable 360° surface panoramas for ground-truth visualization.
-                        </p>
-                      </div>
-
-                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
-                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                          <span className="text-cyan-400">3. THERMAL &amp; FRICTION:</span>
-                          <span>Mars Odyssey THEMIS</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Thermal inertia derived regolith friction coefficients (μ = 0.30 to 0.78), identifying loose sand slip hazards.
-                        </p>
-                      </div>
-
-                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
-                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                          <span className="text-cyan-400">4. SPECTRAL MINERALOGY:</span>
-                          <span>MRO CRISM Astrobiology</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Astrobiological scoring based on smectite clays, magnesium carbonates, phyllosilicates, and sulfate mineral veins.
-                        </p>
-                      </div>
-
-                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
-                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                          <span className="text-cyan-400">5. ATMOSPHERIC:</span>
-                          <span>Curiosity REMS + MEDA</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Live atmospheric pressure (610-850 Pa), diurnal ground/air temperatures, wind speed, and dust opacity (tau).
-                        </p>
-                      </div>
-
-                      <div className="bg-[#0e1626] border border-slate-800 rounded-lg p-2.5">
-                        <div className="font-bold text-slate-200 flex items-center gap-1.5">
-                          <span className="text-cyan-400">6. RADIATION &amp; WEATHER:</span>
-                          <span>Curiosity RAD + FR-07 HAVEN</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Galactic Cosmic Ray dosimetry (~240 μSv/day), Solar Particle Event (SPE) alert, and 3D cliff shadow evacuation routing.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Astronaut Safety & Human Running Scale */}
-                  <div className="bg-[#0e1626] border border-slate-800 rounded-xl p-3.5 space-y-2">
-                    <div className="text-[11px] font-bold text-rose-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
-                      <span>🛡️</span>
-                      <span>ASTRONAUT SAFETY &amp; BIO-TERRAMECHANICS PROTOCOLS</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-slate-300 font-mono">
-                      <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
-                        <span className="text-cyan-400 block font-bold">SANTEE-PANDOLF (0.38g)</span>
-                        Metabolic watts, 25kg tool payload, 45W suit resistance.
-                      </div>
-                      <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
-                        <span className="text-amber-400 block font-bold">PLSS TRI-EXPENDABLES</span>
-                        Sublimator water, O2 burn, LiOH scrubber saturation.
-                      </div>
-                      <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
-                        <span className="text-emerald-400 block font-bold">NASA RULE OF HALF</span>
-                        50% safe turn-around boundary with 3D walkback isochrone.
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Footer */}
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                    <span className="text-[10px] font-mono text-slate-400">
-                      TRAVERSE SCALING: Earth-scale running trails (~8m corridor) hugging 3D micro-topography.
-                    </span>
-                    <button
-                      onClick={() => setShowChallengeModal(false)}
-                      className="px-4 py-1.5 rounded-lg text-xs font-mono font-bold uppercase bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-all cursor-pointer"
-                    >
-                      RETURN TO EXPLORATION
-                    </button>
-                  </div>
-                </div>
-              </div>
             )}
           </main>
 
           {/* =================================================================
               RIGHT TACTICAL SIDEBAR
              ================================================================= */}
-          <aside className="w-72 bg-[#0b101b]/92 border-l border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
-            <div className="space-y-3">
-              <div className="border-b border-slate-800 pb-1 flex items-center justify-between">
-                <div>
-                  <div className="text-[11px] font-bold tracking-wider text-slate-100 uppercase">
-                    {traverseMode === 'ROVER_AUTOPILOT'
-                      ? 'VEHICLE SAFETY STATUS'
-                      : 'ASTRONAUT M. ELDRIDGE'}
+          {rightPanelOpen && (
+            <aside className="w-72 bg-[#0b101b]/95 border-l border-slate-700/80 p-3 flex flex-col justify-between z-20 shrink-0 overflow-y-auto">
+              <div className="space-y-3">
+                <div className="border-b border-slate-800 pb-1 flex items-center justify-between">
+                  <div>
+                    <div className="text-[11px] font-bold tracking-wider text-slate-100 uppercase">
+                      EVA TELEMETRY
+                    </div>
+                    <div className="text-[9px] text-cyan-300 uppercase font-mono flex items-center gap-1 font-bold">
+                      <span>ASTRONAUT SADIA A. PUSPO</span>
+                      <span className="text-[7.5px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-normal">BGD</span>
+                    </div>
                   </div>
-                  <div className="text-[9px] text-slate-400 uppercase font-mono">
-                    {traverseMode === 'ROVER_AUTOPILOT'
-                      ? 'HAZARD TELEMETRY & TRACTION'
-                      : 'SUIT BIO-METABOLIC STATUS'}
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 font-mono text-[9px] font-bold">
+                      {isSpeAlertActive ? (
+                        <span className="flex items-center gap-1 text-amber-300">
+                          <Zap className="w-2.5 h-2.5 text-amber-400" /> SPE
+                        </span>
+                      ) : (
+                        '● NOMINAL'
+                      )}
+                    </span>
+                    <button
+                      onClick={() => setRightPanelOpen(false)}
+                      className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-800 text-xs font-mono transition-all cursor-pointer ml-1"
+                      title="Collapse Panel (Clean Map View)"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-              </div>
 
               {/* Real-Time Mars Ephemeris & Sun Sync Control */}
               <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2 text-xs">
@@ -5383,7 +5955,7 @@ export default function MarsGlobeViewer() {
                   </span>
                   <button
                     onClick={() => setSyncRealMarsTime(!syncRealMarsTime)}
-                    className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border ${
+                    className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border cursor-pointer ${
                       syncRealMarsTime
                         ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
                         : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
@@ -5418,112 +5990,108 @@ export default function MarsGlobeViewer() {
                 )}
               </div>
 
-              {/* Traction Grip / O2 Saturation */}
-              <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5">
-                <div className="flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase mb-1.5">
-                  <span>
-                    {traverseMode === 'ROVER_AUTOPILOT' ? 'TRACTION GRIP' : 'O2 SATURATION'}
-                  </span>
-                  <span className="text-cyan-400 font-mono">O₂</span>
+              {/* Astronaut Bio-Metabolic Status (Santee-Pandolf Spacesuit Model) */}
+              <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2">
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase">
+                  <span>EVA BIOMETRICS (0.38g)</span>
+                  <span className="text-cyan-400 font-mono">PLSS SUIT</span>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-full border-4 border-amber-400 flex flex-col items-center justify-center shrink-0">
-                    <span className="text-sm font-mono font-bold text-slate-100">
-                      {traverseMode === 'ROVER_AUTOPILOT'
-                        ? liveTelemetry.tractionPct
-                        : liveTelemetry.o2SatPct}
-                    </span>
-                    <span className="text-[8px] font-mono text-slate-400">%</span>
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                  <div className="bg-[#090e18] p-2 rounded border border-slate-800/80">
+                    <div className="text-slate-400 text-[9px]">O₂ SATURATION</div>
+                    <div className="text-base font-bold text-emerald-300">{liveTelemetry.o2SatPct}%</div>
+                    <div className="text-[8px] text-slate-500">SpO₂ Nominal</div>
                   </div>
-                  <svg className="flex-1 h-11 bg-[#080d17] rounded border border-slate-800/80" viewBox="0 0 120 40">
-                    <path
-                      d="M 0 28 L 20 25 L 40 27 L 60 18 L 80 20 L 100 12 L 120 14 L 120 40 L 0 40 Z"
-                      fill="rgba(0, 240, 255, 0.18)"
-                    />
-                    <path
-                      d="M 0 28 L 20 25 L 40 27 L 60 18 L 80 20 L 100 12 L 120 14"
-                      fill="none"
-                      stroke="#00f0ff"
-                      strokeWidth="1.8"
-                    />
-                  </svg>
+                  <div className="bg-[#090e18] p-2 rounded border border-slate-800/80">
+                    <div className="text-slate-400 text-[9px]">HEART RATE</div>
+                    <div className="text-base font-bold text-cyan-300">{liveTelemetry.heartRateBpm} <span className="text-[9px] text-slate-400">bpm</span></div>
+                    <div className="text-[8px] text-slate-500">Slope: {liveTelemetry.slopeDeg}°</div>
+                  </div>
+                  <div className="bg-[#090e18] p-2 rounded border border-slate-800/80">
+                    <div className="text-slate-400 text-[9px]">METABOLIC POWER</div>
+                    <div className="text-base font-bold text-amber-300">{liveTelemetry.metabolicWatts} <span className="text-[9px] text-slate-400">W</span></div>
+                    <div className="text-[8px] text-slate-500">Santee-Pandolf</div>
+                  </div>
+                  <div className="bg-[#090e18] p-2 rounded border border-slate-800/80">
+                    <div className="text-slate-400 text-[9px]">SUIT PRESSURE</div>
+                    <div className="text-base font-bold text-sky-300">29.65 <span className="text-[9px] text-slate-400">kPa</span></div>
+                    <div className="text-[8px] text-slate-500">4.3 psi Pure O₂</div>
+                  </div>
                 </div>
               </div>
 
               {/* ALGORITHM 1: PLSS TRI-EXPENDABLES (FEEDWATER, O2, LiOH, BATTERY) */}
-              {traverseMode === 'ASTRONAUT_HIKE' && (
-                <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2">
-                  <div className="flex justify-between items-center text-[10px] font-bold text-cyan-300 uppercase border-b border-slate-800 pb-1">
-                    <span>PLSS TRI-EXPENDABLES</span>
-                    <span className="text-[9px] font-mono text-amber-400">RULE OF HALF</span>
-                  </div>
+              <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2">
+                <div className="flex justify-between items-center text-[10px] font-bold text-cyan-300 uppercase border-b border-slate-800 pb-1">
+                  <span>PLSS TRI-EXPENDABLES</span>
+                  <span className="text-[9px] font-mono text-amber-400">RULE OF HALF</span>
+                </div>
 
-                  {/* Sublimator Cooling Water */}
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between text-[10px] font-mono">
-                      <span className="text-slate-400">FEEDWATER (H₂O):</span>
-                      <span className="text-cyan-300 font-bold">
-                        {liveTelemetry.waterReservePct}% ({liveTelemetry.waterBurnGph} g/h)
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-cyan-400 rounded"
-                        style={{ width: `${liveTelemetry.waterReservePct}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Primary O2 Tanks */}
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between text-[10px] font-mono">
-                      <span className="text-slate-400">PRIMARY O₂ (25 MPa):</span>
-                      <span className="text-emerald-300 font-bold">{liveTelemetry.o2ReservePct}%</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-400 rounded"
-                        style={{ width: `${liveTelemetry.o2ReservePct}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* LiOH CO2 Scrubber */}
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between text-[10px] font-mono">
-                      <span className="text-slate-400">LiOH CO₂ SCRUBBER:</span>
-                      <span className="text-amber-300 font-bold">{liveTelemetry.liohReservePct}%</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-amber-400 rounded"
-                        style={{ width: `${liveTelemetry.liohReservePct}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Suit Pressure & Compliance Badge */}
-                  <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[9px] font-mono">
-                    <span className="text-slate-400">SUIT PRES: 29.65 kPa (4.3 psi)</span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded font-bold ${
-                        activeRouteData?.ruleOfHalfCompliant ?? true
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
-                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
-                      }`}
-                    >
-                      {activeRouteData?.ruleOfHalfCompliant ?? true ? '50% RESERVE OK' : 'LIMIT EXCEEDED'}
+                {/* Sublimator Cooling Water */}
+                <div className="space-y-0.5">
+                  <div className="flex justify-between text-[10px] font-mono">
+                    <span className="text-slate-400">FEEDWATER (H₂O):</span>
+                    <span className="text-cyan-300 font-bold">
+                      {liveTelemetry.waterReservePct}% ({liveTelemetry.waterBurnGph} g/h)
                     </span>
                   </div>
+                  <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-400 rounded"
+                      style={{ width: `${liveTelemetry.waterReservePct}%` }}
+                    />
+                  </div>
                 </div>
-              )}
+
+                {/* Primary O2 Tanks */}
+                <div className="space-y-0.5">
+                  <div className="flex justify-between text-[10px] font-mono">
+                    <span className="text-slate-400">PRIMARY O₂ (25 MPa):</span>
+                    <span className="text-emerald-300 font-bold">{liveTelemetry.o2ReservePct}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-400 rounded"
+                      style={{ width: `${liveTelemetry.o2ReservePct}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* LiOH CO2 Scrubber */}
+                <div className="space-y-0.5">
+                  <div className="flex justify-between text-[10px] font-mono">
+                    <span className="text-slate-400">LiOH CO₂ SCRUBBER:</span>
+                    <span className="text-amber-300 font-bold">{liveTelemetry.liohReservePct}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-slate-800 rounded overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400 rounded"
+                      style={{ width: `${liveTelemetry.liohReservePct}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Suit Pressure & Compliance Badge */}
+                <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[9px] font-mono">
+                  <span className="text-slate-400">SUIT PRES: 29.65 kPa (4.3 psi)</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded font-bold ${
+                      activeRouteData?.ruleOfHalfCompliant ?? true
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
+                    }`}
+                  >
+                    {activeRouteData?.ruleOfHalfCompliant ?? true ? '50% RESERVE OK' : 'LIMIT EXCEEDED'}
+                  </span>
+                </div>
+              </div>
 
               {/* FR-07: RAD-HAVEN ACTIVE HAVEN CARD */}
               {isSpeAlertActive && speReport && (
                 <div className="bg-rose-950/80 border-2 border-rose-500 rounded-xl p-2.5 space-y-1.5 animate-in fade-in">
                   <div className="flex items-center justify-between text-[10px] font-bold text-rose-300 uppercase">
                     <span className="flex items-center gap-1.5">
-                      <span className="animate-ping text-xs">⚡</span>
+                      <Zap className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
                       <span>SPE RADIATION HAVEN</span>
                     </span>
                     <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white font-mono text-[9px]">
@@ -5592,60 +6160,139 @@ export default function MarsGlobeViewer() {
               )}
 
               {/* Round-Trip Elevation Profile Chart */}
-              {routingEnabled && activeRouteData && activeRouteData.isTraversable && (
-                <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5">
-                  <div className="flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase mb-1">
-                    <span>ROUND-TRIP ELEVATION (A→B→A)</span>
-                    <span className="font-mono text-amber-400">
-                      Δ{' '}
-                      {Math.round(
-                        Math.max(...activeRouteData.profile.map((p) => p.elevM)) -
-                          Math.min(...activeRouteData.profile.map((p) => p.elevM))
-                      )}{' '}
-                      m
-                    </span>
+              {routingEnabled && activeRouteData && activeRouteData.isTraversable && (() => {
+                const activeProfileSample =
+                  simulatedProfileIndex !== null && activeRouteData.profile[simulatedProfileIndex]
+                    ? activeRouteData.profile[simulatedProfileIndex]
+                    : null;
+                const currentEffSlope = activeProfileSample
+                  ? activeProfileSample.slopeDeg
+                  : liveTelemetry.slopeDeg;
+                const currentEffHeartRate = Math.min(
+                  155,
+                  Math.round(72 + Math.max(0, currentEffSlope) * 3.8)
+                );
+
+                return (
+                  <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-1.5">
+                    <div className="flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase">
+                      <span>ROUND-TRIP ELEVATION (A→B→A)</span>
+                      <span className="font-mono text-amber-400">
+                        Δ{' '}
+                        {Math.round(
+                          Math.max(...activeRouteData.profile.map((p) => p.elevM)) -
+                            Math.min(...activeRouteData.profile.map((p) => p.elevM))
+                        )}{' '}
+                        m
+                      </span>
+                    </div>
+                    <svg
+                      onMouseMove={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                        const idx = Math.round(ratio * (activeRouteData.profile.length - 1));
+                        setSimulatedProfileIndex(idx);
+                      }}
+                      onMouseLeave={() => {
+                        if (!isWalkSimRunning) setSimulatedProfileIndex(null);
+                      }}
+                      className="w-full h-14 bg-[#080d17] rounded border border-slate-800/80 cursor-crosshair"
+                      viewBox="0 0 160 50"
+                    >
+                      {(() => {
+                        const prof = activeRouteData.profile;
+                        if (prof.length < 2) return null;
+                        const minE = Math.min(...prof.map((p) => p.elevM));
+                        const maxE = Math.max(minE + 10, ...prof.map((p) => p.elevM));
+                        const pts = prof
+                          .map((p, idx) => {
+                            const x = (idx / (prof.length - 1)) * 160;
+                            const y = 44 - ((p.elevM - minE) / (maxE - minE)) * 36;
+                            return `${x.toFixed(1)},${y.toFixed(1)}`;
+                          })
+                          .join(' ');
+
+                        const scrubX =
+                          simulatedProfileIndex !== null
+                            ? (simulatedProfileIndex / (prof.length - 1)) * 160
+                            : null;
+                        const scrubY =
+                          simulatedProfileIndex !== null && prof[simulatedProfileIndex]
+                            ? 44 - ((prof[simulatedProfileIndex].elevM - minE) / (maxE - minE)) * 36
+                            : null;
+
+                        return (
+                          <>
+                            <polygon
+                              points={`0,50 ${pts} 160,50`}
+                              fill="rgba(245, 158, 11, 0.22)"
+                            />
+                            <polyline
+                              fill="none"
+                              stroke="#f59e0b"
+                              strokeWidth="2"
+                              points={pts}
+                            />
+                            {/* Midpoint divider line at B2 turnaround */}
+                            <line
+                              x1="80"
+                              y1="0"
+                              x2="80"
+                              y2="50"
+                              stroke="#00f0ff"
+                              strokeDasharray="2,2"
+                              strokeWidth="1"
+                            />
+                            {/* Scrub / Walk simulation indicator */}
+                            {scrubX !== null && scrubY !== null && (
+                              <>
+                                <line
+                                  x1={scrubX}
+                                  y1="0"
+                                  x2={scrubX}
+                                  y2="50"
+                                  stroke="#00f0ff"
+                                  strokeWidth="1.5"
+                                />
+                                <circle
+                                  cx={scrubX}
+                                  cy={scrubY}
+                                  r="3.5"
+                                  fill="#00f0ff"
+                                  stroke="#0b101b"
+                                  strokeWidth="1"
+                                />
+                              </>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </svg>
+
+                    {/* Active Scrub Telemetry Readout */}
+                    {activeProfileSample && (
+                      <div className="flex justify-between items-center text-[9px] font-mono text-cyan-300 pt-0.5 border-t border-slate-800">
+                        <span>DIST: {activeProfileSample.distKm.toFixed(2)} km</span>
+                        <span>SLOPE: {activeProfileSample.slopeDeg.toFixed(1)}°</span>
+                        <span className="text-amber-300 font-bold">{currentEffHeartRate} BPM</span>
+                      </div>
+                    )}
+
+                    {/* 0.38g Walk Simulator Button */}
+                    <button
+                      onClick={() => setIsWalkSimRunning(!isWalkSimRunning)}
+                      className={`w-full py-1 px-2 rounded-lg font-mono text-[9px] font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        isWalkSimRunning
+                          ? 'bg-amber-500/25 text-amber-300 border border-amber-400 animate-pulse'
+                          : 'bg-slate-900/90 hover:bg-cyan-950/80 border border-slate-700 text-slate-300 hover:text-cyan-200'
+                      }`}
+                    >
+                      <Activity className="w-3 h-3 text-cyan-400" />
+                      <span>{isWalkSimRunning ? 'PAUSE WALK SIMULATOR' : 'START 0.38g WALK SIMULATOR'}</span>
+                    </button>
                   </div>
-                  <svg className="w-full h-14 bg-[#080d17] rounded border border-slate-800/80" viewBox="0 0 160 50">
-                    {(() => {
-                      const prof = activeRouteData.profile;
-                      if (prof.length < 2) return null;
-                      const minE = Math.min(...prof.map((p) => p.elevM));
-                      const maxE = Math.max(minE + 10, ...prof.map((p) => p.elevM));
-                      const pts = prof
-                        .map((p, idx) => {
-                          const x = (idx / (prof.length - 1)) * 160;
-                          const y = 44 - ((p.elevM - minE) / (maxE - minE)) * 36;
-                          return `${x.toFixed(1)},${y.toFixed(1)}`;
-                        })
-                        .join(' ');
-                      return (
-                        <>
-                          <polygon
-                            points={`0,50 ${pts} 160,50`}
-                            fill="rgba(245, 158, 11, 0.22)"
-                          />
-                          <polyline
-                            fill="none"
-                            stroke="#f59e0b"
-                            strokeWidth="2"
-                            points={pts}
-                          />
-                          {/* Midpoint divider line at B2 turnaround */}
-                          <line
-                            x1="80"
-                            y1="0"
-                            x2="80"
-                            y2="50"
-                            stroke="#00f0ff"
-                            strokeDasharray="2,2"
-                            strokeWidth="1"
-                          />
-                        </>
-                      );
-                    })()}
-                  </svg>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Heart Rate / Speed + Radiation Dose */}
               <div className="bg-[#0e1525] border border-slate-800 rounded-xl p-2.5 space-y-2">
@@ -5654,10 +6301,16 @@ export default function MarsGlobeViewer() {
                     <div className="text-[10px] text-slate-400 uppercase font-bold">
                       {traverseMode === 'ROVER_AUTOPILOT' ? 'TRAVERSE SPEED' : 'HEART RATE'}
                     </div>
-                    <div className="text-lg font-mono font-bold text-slate-100">
-                      {traverseMode === 'ROVER_AUTOPILOT'
-                        ? `${liveTelemetry.speedKmh} km/h`
-                        : `${liveTelemetry.heartRateBpm} BPM`}
+                    <div className="text-lg font-mono font-bold text-slate-100 flex items-center gap-1.5">
+                      <span>
+                        {traverseMode === 'ROVER_AUTOPILOT'
+                          ? `${liveTelemetry.speedKmh} km/h`
+                          : `${
+                              simulatedProfileIndex !== null && activeRouteData?.profile[simulatedProfileIndex]
+                                ? Math.min(155, Math.round(72 + Math.max(0, activeRouteData.profile[simulatedProfileIndex].slopeDeg) * 3.8))
+                                : liveTelemetry.heartRateBpm
+                            } BPM`}
+                      </span>
                     </div>
                   </div>
                   <svg className="w-24 h-9" viewBox="0 0 100 36">
@@ -5718,6 +6371,7 @@ export default function MarsGlobeViewer() {
               </div>
             </div>
           </aside>
+          )}
         </div>
 
         {/* ===================================================================
@@ -5752,18 +6406,146 @@ export default function MarsGlobeViewer() {
             <span>
               MARS EPHEMERIS:{' '}
               <strong className="text-emerald-400">
-                {syncRealMarsTime ? 'LIVE REAL-TIME SYNC' : 'MANUAL OVERRIDE'}
+                {syncRealMarsTime ? 'REAL-TIME SYNC' : 'MANUAL SUN'}
               </strong>
             </span>
           </div>
 
-          <div className="hidden md:flex items-center gap-4 text-slate-400">
+          <div className="hidden sm:flex items-center gap-3 text-slate-400">
             <span>
-              HOVER OVER MAP BADGES TO AUTO-HIDE • CLICK{' '}
-              <strong className="text-rose-300">✕ EXIT ROUTE</strong> FOR CLEAN MAP
+              COORDS:{' '}
+              <strong className="text-cyan-300">
+                {liveTelemetry.lat >= 0
+                  ? `${liveTelemetry.lat.toFixed(2)}°N`
+                  : `${Math.abs(liveTelemetry.lat).toFixed(2)}°S`}{' '}
+                {liveTelemetry.lon.toFixed(2)}°E
+              </strong>
+            </span>
+            <span className="text-slate-600">|</span>
+            <span>
+              ELEV:{' '}
+              <strong className="text-emerald-300">
+                {Math.round(liveTelemetry.elevM)} m
+              </strong>
             </span>
           </div>
         </footer>
+
+        {/* Option C: Real-Time Solar Glare Hazard Warning */}
+        {solarGlareHazard.isHazard && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-950/90 border border-amber-400 text-amber-200 text-xs font-mono font-bold shadow-[0_0_20px_rgba(245,158,11,0.5)] animate-pulse pointer-events-none">
+            <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              SOLAR GLARE HAZARD: Low-angle sun at {solarGlareHazard.sunElevationDeg}° elev (az {solarGlareHazard.sunAzimuthDeg}°). Gold electrochromic filter active.
+            </span>
+          </div>
+        )}
+
+        {/* Option B: First-Person Astronaut Visor HUD Mode */}
+        {isVisorMode && (
+          <VisorHudOverlay
+            telemetry={{
+              lat: liveTelemetry.lat,
+              lon: liveTelemetry.lon,
+              elevM: liveTelemetry.elevM,
+              altitudeKm: liveTelemetry.altitudeKm,
+              pitchDeg: liveTelemetry.pitchDeg,
+              rollDeg: liveTelemetry.rollDeg,
+              slopeDeg: liveTelemetry.slopeDeg,
+              headingDeg: liveTelemetry.headingDeg,
+              compassDir: liveTelemetry.compassDir,
+              frictionMu: liveTelemetry.frictionMu,
+              tractionPct: liveTelemetry.tractionPct,
+              slipRiskPct: liveTelemetry.slipRiskPct,
+              speedKmh: liveTelemetry.speedKmh,
+              wheelTorques: [120, 120, 115, 115, 118, 118],
+              o2SatPct: liveTelemetry.o2SatPct,
+              suitPressureKpa: liveTelemetry.suitPressureKpa,
+              heartRateBpm: liveTelemetry.heartRateBpm,
+              radiationMsvH: liveTelemetry.radiationMsvH,
+              externalTempC: liveTelemetry.externalTempC,
+              atmosPresPa: liveTelemetry.atmosPresPa,
+              qualityTierLabel: 'HiRISE 1m Stereo DTM',
+              metabolicWatts: liveTelemetry.metabolicWatts,
+              waterBurnGph: liveTelemetry.waterBurnGph,
+              waterReservePct: Math.round(activeRouteData?.waterReserveMarginPct ?? 88),
+              o2ReservePct: 98,
+              liohReservePct: 92,
+              batteryReservePct: 84,
+            }}
+            ephemeris={marsEphemeris}
+            speReport={speReport}
+            rfCommsReport={rfCommsReport}
+            traverseMode={traverseMode}
+            destinationName={activeRouteData?.waypoints.find((w) => w.id === 'B2')?.label || 'Target Scarp'}
+            distToDestKm={activeRouteData?.outboundDistKm || 4.5}
+            bearingToDestDeg={312}
+            onClose={toggleVisorMode}
+            onToggleSpe={handleToggleSpeAlert}
+          />
+        )}
+
+        {/* Option A: NASA Mission Traverse Export Modal */}
+        <TraverseExportModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          routeData={activeRouteData}
+          astronautName="Sadia A. Puspo"
+          siteName={selectedSite.name}
+        />
+
+        {/* Text AI Copilot for Astronaut Sadia A. Puspo */}
+        <AresTacticalAiCopilot
+          isOpen={isAiCopilotOpen}
+          onClose={() => setIsAiCopilotOpen(false)}
+          astronautName="Sadia A. Puspo"
+          routeData={activeRouteData}
+          currentSite={selectedSite.name}
+          currentViewMode={viewMode}
+          currentLayerMode={layerMode}
+          traverseMode={traverseMode}
+          onExecuteCommand={handleCopilotCommand}
+        />
+
+        {/* Floating Quick AI Copilot Launcher Button */}
+        {!isAiCopilotOpen && (
+          <button
+            onClick={() => setIsAiCopilotOpen(true)}
+            className="fixed bottom-11 right-4 z-40 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0a1a30]/95 to-[#0e2444]/95 hover:from-cyan-900/90 hover:to-blue-900/90 border border-cyan-400/70 text-cyan-200 font-mono text-xs font-bold shadow-[0_0_20px_rgba(0,240,255,0.35)] transition-all cursor-pointer hover:scale-105 group"
+            title="Open ARES AI Tactical Copilot (Assisting Astronaut Sadia A. Puspo)"
+          >
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
+            </span>
+            <Bot className="w-4 h-4 text-cyan-400 group-hover:rotate-12 transition-transform" />
+            <span className="tracking-wider">AI COPILOT</span>
+          </button>
+        )}
+
+        {/* Sleek Loading Overlay when switching layers/maps */}
+        {isMapSwitching && (
+          <div className="absolute inset-0 z-50 pointer-events-none flex flex-col items-center justify-center bg-[#020612]/75 backdrop-blur-sm animate-in fade-in duration-150">
+            <div className="relative flex flex-col items-center gap-3 p-6 rounded-2xl bg-[#06101e]/90 border border-cyan-500/60 shadow-[0_0_50px_rgba(0,240,255,0.3)]">
+              <div className="relative w-12 h-12 flex items-center justify-center">
+                <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20 animate-ping" />
+                <div className="w-10 h-10 rounded-full border-2 border-t-cyan-400 border-r-cyan-400 border-b-transparent border-l-transparent animate-spin" />
+                <Crosshair className="w-5 h-5 text-cyan-400 absolute" />
+              </div>
+              <div className="text-center space-y-1">
+                <div className="text-xs font-mono font-bold text-cyan-300 tracking-wider uppercase">
+                  {mapLoadingText || 'SYNCHRONIZING ORBITAL SENSORS...'}
+                </div>
+                <div className="text-[10px] font-mono text-slate-400">
+                  MRO • MARS TREK WMS • HiRISE 1m STEREO PIPELINE
+                </div>
+              </div>
+              <div className="w-48 h-1 bg-slate-800 rounded-full overflow-hidden">
+                <div className="h-full bg-cyan-400 animate-pulse w-3/4 rounded-full" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {initialLoading && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#03050a]/90 backdrop-blur-md">
