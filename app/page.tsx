@@ -1,8 +1,9 @@
 import MarsGlobeViewer from './MarsGlobeViewer';
 
 export const metadata = {
-  title: 'Mars 3D Interactive Globe - NASA Trek Real-Time Streaming',
-  description: 'Interactive 3D Mars globe with real-time GPU elevation displacement streaming from NASA Trek API, originating at Jezero Crater.',
+  title: 'ARES Navigator — Team Starora | Mars 3D Tactical Mission Control',
+  description:
+    'ARES Navigator by Team Starora — Interactive 3D Mars globe & EVA tactical mission planner with real-time NASA Mars Trek DEM streaming.',
 };
 
 export default function Home() {

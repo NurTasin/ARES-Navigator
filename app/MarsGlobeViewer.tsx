@@ -2679,8 +2679,52 @@ export default function MarsGlobeViewer() {
 
   // Primary View & Navigation Modes
   const [initialLoading, setInitialLoading] = useState<boolean>(true);
+  const [showSplashScreen, setShowSplashScreen] = useState<boolean>(true);
+  const [splashProgress, setSplashProgress] = useState<number>(0);
+  const [splashFadingOut, setSplashFadingOut] = useState<boolean>(false);
   const [selectedSite, setSelectedSite] = useState<ExpeditionSite>(EXPEDITION_SITES[0]);
   const [isGlobalCommandView, setIsGlobalCommandView] = useState<boolean>(false);
+
+  // First-load Splash Screen progression ("ARES Navigator" by Team "Starora")
+  useEffect(() => {
+    if (!showSplashScreen) return;
+    const startTime = performance.now();
+    const durationMs = 2600;
+    const interval = setInterval(() => {
+      const elapsed = performance.now() - startTime;
+      const pct = Math.min(100, Math.round((elapsed / durationMs) * 100));
+      setSplashProgress(pct);
+      if (pct >= 100) {
+        clearInterval(interval);
+      }
+    }, 40);
+    return () => clearInterval(interval);
+  }, [showSplashScreen]);
+
+  useEffect(() => {
+    if (!showSplashScreen || splashFadingOut) return;
+    if (splashProgress >= 100 && !initialLoading) {
+      const tFade = setTimeout(() => {
+        setSplashFadingOut(true);
+      }, 280);
+      const tHide = setTimeout(() => {
+        setShowSplashScreen(false);
+      }, 820);
+      return () => {
+        clearTimeout(tFade);
+        clearTimeout(tHide);
+      };
+    }
+    // Fallback safety timeout so splash never hangs if network tiles are slow
+    if (splashProgress >= 100) {
+      const tFallbackFade = setTimeout(() => setSplashFadingOut(true), 1200);
+      const tFallbackHide = setTimeout(() => setShowSplashScreen(false), 1750);
+      return () => {
+        clearTimeout(tFallbackFade);
+        clearTimeout(tFallbackHide);
+      };
+    }
+  }, [splashProgress, initialLoading, showSplashScreen, splashFadingOut]);
 
   // Routing State (with Option to Exit Routing Mode Completely!)
   const [routingEnabled, setRoutingEnabled] = useState<boolean>(true);
@@ -2751,8 +2795,6 @@ export default function MarsGlobeViewer() {
   const [settingsDropdownOpen, setSettingsDropdownOpen] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'3D' | '2D'>('3D');
 
-  const leftPanelScale = Number((leftPanelWidth / 280).toFixed(3));
-  const rightPanelScale = Number((rightPanelWidth / 288).toFixed(3));
 
   const startPanelResize = (panel: 'LEFT' | 'RIGHT', e: React.MouseEvent) => {
     e.preventDefault();
@@ -5731,7 +5773,7 @@ export default function MarsGlobeViewer() {
               {/* Scrollable inner body with custom tactical Y-axis scrollbar & proportional element scaling */}
               <div className="flex-1 overflow-y-auto overflow-x-hidden ares-scrollbar">
                 <div
-                  style={{ zoom: leftPanelScale }}
+                 
                   className="p-3 min-h-full flex flex-col justify-between gap-3"
                 >
                   <div className="space-y-3">
@@ -5747,7 +5789,7 @@ export default function MarsGlobeViewer() {
                             className="px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 text-[8.5px] font-mono font-bold text-cyan-200 cursor-pointer"
                             title="Reset panel width to default (100%)"
                           >
-                            {Math.round(leftPanelScale * 100)}%
+                            {leftPanelWidth}px
                           </button>
                         )}
                         <button
@@ -6590,7 +6632,7 @@ export default function MarsGlobeViewer() {
               {/* Scrollable inner body with custom tactical Y-axis scrollbar & proportional element scaling */}
               <div className="flex-1 overflow-y-auto overflow-x-hidden ares-scrollbar">
                 <div
-                  style={{ zoom: rightPanelScale }}
+                 
                   className="p-3 min-h-full flex flex-col justify-between gap-3"
                 >
                   <div className="space-y-3">
@@ -6611,7 +6653,7 @@ export default function MarsGlobeViewer() {
                             className="px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 text-[8.5px] font-mono font-bold text-cyan-200 cursor-pointer"
                             title="Reset panel width to default (100%)"
                           >
-                            {Math.round(rightPanelScale * 100)}%
+                            {rightPanelWidth}px
                           </button>
                         )}
                         <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 font-mono text-[9px] font-bold">
@@ -7255,15 +7297,128 @@ export default function MarsGlobeViewer() {
           </div>
         )}
 
-        {initialLoading && (
-          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#03050a]/90 backdrop-blur-md">
-            <div className="h-10 w-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-sm font-bold tracking-widest text-slate-200 uppercase">
-              INITIALIZING ARES-NAVIGATOR TACTICAL COMMAND...
-            </p>
-            <p className="text-xs text-cyan-400 mt-1 font-mono">
-              Syncing Real-Time Mars Ephemeris & Seamless Bicubic DEM...
-            </p>
+        {/* ===================================================================
+            FIRST-LOAD MISSION SPLASH SCREEN — "ARES Navigator" by Team "Starora"
+           =================================================================== */}
+        {(showSplashScreen || initialLoading) && (
+          <div
+            className={`fixed inset-0 z-100 flex flex-col items-center justify-center bg-[#030611] text-slate-100 select-none overflow-hidden transition-opacity duration-500 ${
+              splashFadingOut && !initialLoading ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            }`}
+          >
+            {/* Ambient Cosmic Nebula & Martian Horizon Glow */}
+            <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_35%,rgba(14,165,233,0.16)_0%,rgba(88,28,135,0.12)_35%,rgba(3,6,17,0.98)_75%)]" />
+            <div className="absolute -bottom-40 left-1/2 -translate-x-1/2 w-[900px] h-[320px] rounded-full bg-amber-600/12 blur-[110px] pointer-events-none" />
+            <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[700px] h-[280px] rounded-full bg-cyan-500/12 blur-[100px] pointer-events-none" />
+
+            {/* Subtle Tactical Coordinate Grid Overlay */}
+            <div
+              className="absolute inset-0 pointer-events-none opacity-15"
+              style={{
+                backgroundImage:
+                  'linear-gradient(to right, rgba(34,211,238,0.14) 1px, transparent 1px), linear-gradient(to bottom, rgba(34,211,238,0.14) 1px, transparent 1px)',
+                backgroundSize: '48px 48px',
+              }}
+            />
+
+            {/* Main Splash Card Container */}
+            <div className="relative z-10 flex flex-col items-center max-w-lg w-[92%] px-7 py-8 rounded-3xl bg-[#060d1d]/85 backdrop-blur-2xl border border-cyan-500/40 shadow-[0_0_70px_rgba(0,240,255,0.16),inset_0_0_35px_rgba(0,240,255,0.06)]">
+              {/* Top Corner HUD Accents */}
+              <div className="absolute top-3 left-3 w-5 h-5 border-t-2 border-l-2 border-cyan-400/70 rounded-tl-lg pointer-events-none" />
+              <div className="absolute top-3 right-3 w-5 h-5 border-t-2 border-r-2 border-cyan-400/70 rounded-tr-lg pointer-events-none" />
+              <div className="absolute bottom-3 left-3 w-5 h-5 border-b-2 border-l-2 border-cyan-400/70 rounded-bl-lg pointer-events-none" />
+              <div className="absolute bottom-3 right-3 w-5 h-5 border-b-2 border-r-2 border-cyan-400/70 rounded-br-lg pointer-events-none" />
+
+              {/* Team Starora Logo Emblem */}
+              <div className="relative group mb-4">
+                {/* Outer Rotating Orbital Ring */}
+                <div className="absolute -inset-2.5 rounded-3xl border border-dashed border-cyan-400/45" />
+                <div className="absolute -inset-1 rounded-3xl bg-gradient-to-tr from-cyan-500/30 via-purple-500/25 to-amber-500/25 blur-md" />
+
+                {/* Cropped/Masked Circular Frame for /starora.png */}
+                <div className="relative w-44 h-44 sm:w-52 sm:h-52 rounded-2xl overflow-hidden border-2 border-cyan-400/70 bg-[#050814] shadow-[0_0_30px_rgba(34,211,238,0.35)] flex items-center justify-center">
+                  <img
+                    src="/starora.png"
+                    alt="Team Starora Logo"
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              </div>
+
+              {/* Team Badge */}
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-gradient-to-r from-cyan-950/90 via-purple-950/80 to-cyan-950/90 border border-cyan-400/50 shadow-[0_0_15px_rgba(34,211,238,0.2)] mb-3">
+                <Sparkles className="w-3.5 h-3.5 text-cyan-300 animate-pulse" />
+                <span className="text-[11px] font-mono font-bold tracking-[0.22em] uppercase text-cyan-200">
+                  TEAM <span className="text-white font-extrabold">STARORA</span>
+                </span>
+              </div>
+
+              {/* Application Name: ARES Navigator */}
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-wider text-center bg-gradient-to-r from-white via-cyan-200 to-amber-300 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(0,240,255,0.25)]">
+                ARES Navigator
+              </h1>
+
+              <p className="mt-1.5 text-[11px] sm:text-xs font-mono uppercase tracking-[0.18em] text-cyan-300/90 text-center">
+                Martian Surface EVA &amp; Autonomous Rover Tactical Command
+              </p>
+
+              {/* Mission Subsystem Telemetry Tags */}
+              <div className="mt-5 grid grid-cols-3 gap-2 w-full text-[9.5px] font-mono">
+                <div className="bg-[#091428]/90 border border-slate-800 rounded-xl px-2.5 py-2 text-center">
+                  <div className="text-slate-400 uppercase">TERRAIN ENGINE</div>
+                  <div className="text-cyan-300 font-bold mt-0.5">16-Bit MOLA / HiRISE</div>
+                </div>
+                <div className="bg-[#091428]/90 border border-slate-800 rounded-xl px-2.5 py-2 text-center">
+                  <div className="text-slate-400 uppercase">AI COPILOT</div>
+                  <div className="text-emerald-300 font-bold mt-0.5">NINI TACTICAL</div>
+                </div>
+                <div className="bg-[#091428]/90 border border-slate-800 rounded-xl px-2.5 py-2 text-center">
+                  <div className="text-slate-400 uppercase">EVA SUIT HUD</div>
+                  <div className="text-amber-300 font-bold mt-0.5">xEMU 0.38g BIO</div>
+                </div>
+              </div>
+
+              {/* Progress Bar & Dynamic Status Readout */}
+              <div className="mt-6 w-full space-y-2">
+                <div className="flex items-center justify-between text-[10px] font-mono">
+                  <span className="text-cyan-300 flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
+                    <span>
+                      {splashProgress < 35
+                        ? 'Connecting to NASA Mars Trek WMTS & MOLA DEM...'
+                        : splashProgress < 70
+                        ? 'Calibrating 0.38g Santee-Pandolf & A* Slope Solver...'
+                        : splashProgress < 100
+                        ? 'Synchronizing Nini AI Copilot & xEMU Visor HUD...'
+                        : 'All Mission Subsystems Nominal — Ready for Launch'}
+                    </span>
+                  </span>
+                  <span className="text-amber-300 font-bold">{splashProgress}%</span>
+                </div>
+
+                <div className="w-full h-2 rounded-full bg-slate-900 border border-cyan-500/30 overflow-hidden p-0.5">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-amber-400 transition-all duration-100 shadow-[0_0_12px_rgba(0,240,255,0.6)]"
+                    style={{ width: `${splashProgress}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Footer / Skip Button */}
+              <div className="mt-5 w-full flex items-center justify-between pt-3 border-t border-slate-800/80 text-[10px] font-mono text-slate-400">
+                <span>DEVELOPED BY TEAM STARORA</span>
+                <button
+                  onClick={() => {
+                    setInitialLoading(false);
+                    setSplashFadingOut(true);
+                    setTimeout(() => setShowSplashScreen(false), 250);
+                  }}
+                  className="px-3 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/60 text-cyan-200 font-bold uppercase tracking-wider transition-all cursor-pointer hover:scale-105"
+                >
+                  ENTER MISSION CONTROL →
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
